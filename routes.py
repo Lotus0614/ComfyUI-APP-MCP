@@ -19,11 +19,9 @@ MCP_INTERNAL_URL = f"http://127.0.0.1:{os.environ.get('MCP_PORT', '8189')}"
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/status")
 async def mcp_status(request):
-    """Return MCP server status and port."""
-    mcp_port = int(os.environ.get("MCP_PORT", "8189"))
+    """Return MCP server status and endpoint URL."""
     return web.json_response({
-        "mcp_port": mcp_port,
-        "mcp_url": f"http://127.0.0.1:{mcp_port}/mcp",
+        "mcp_url": "http://127.0.0.1:8188/app-mcp",
     })
 
 
