@@ -1,12 +1,12 @@
 # ComfyUI MCP Server
 
-一个 ComfyUI 自定义节点插件，将 ComfyUI 工作流封装为 **模板（Template）**，通过 MCP（Model Context Protocol）协议让 AI 助手（Claude、Cursor 等）直接调用 ComfyUI 进行图片、音频等多媒体生成。
+一个 ComfyUI 自定义节点插件，将 ComfyUI 应用封装为 **模板（Template）**，通过 MCP（Model Context Protocol）协议让 AI 助手（Claude、Cursor 等）直接调用 ComfyUI 进行图片、音频等多媒体生成。
 
 ## 核心概念
 
 ### 模板（Template）
 
-模板 = ComfyUI 工作流 + 自动提取的输入/输出定义。
+模板 = ComfyUI 应用 + 自动提取的输入/输出定义。
 
 - **输入（Inputs）**：从工作流中标记为 `linearData.inputs` 的节点自动提取，AI 只需提供参数值即可
 - **输出（Outputs）**：从工作流中 `linearData.outputs` 标记的节点提取，生成完成后返回结果
@@ -15,10 +15,10 @@
 ### 如何创建模板
 
 - 模板依赖 Comfyui App Mode ！需要支持 App Mode 的 ComfyUI 版本。
-- 对工作流构建应用，标记输入输出节点，将输入节点重命名为AI好理解的名字。
+- 在工作流构菜单中点击构建应用，标记输入输出节点，将输入节点重命名为AI好理解的名字。
 - 加入 Markdown 节点，将标题重命名为 [README] （只有这个标题会被提取），可以详细描述模板的功能、输入参数、输出节点等信息，方便AI理解。
 - 保存工作流，打开ComfyUI设置，找到 MCP Server → Templates，点击 Create from Workflow 选择已保存的工作流，系统自动提取输入参数和输出节点，点击 Create Template 完成创建。
-- 在其他支持MCP的平台添加对应MCP，类型为 streamablehttp，地址为 http://127.0.0.1:8189/mcp。
+- 在其他支持MCP的平台添加对应MCP，类型为 streamable_http，地址为 http://127.0.0.1:8189/mcp。
 - 让ai列出模板测试是否能正常工作
 
 ```
@@ -35,6 +35,41 @@ ComfyUI/
       skill_guide.md
       README.md
 ```
+
+## 安装依赖
+
+本插件依赖以下 Python 包：
+
+| 包名      | 版本要求  | 说明                             |
+| --------- | --------- | -------------------------------- |
+| `fastmcp` | >= 1.0.0  | MCP 协议框架                     |
+| `uvicorn` | >= 0.30.0 | ASGI 服务器                      |
+| `httpx`   | >= 0.27.0 | HTTP 客户端，用于与 ComfyUI 通信 |
+
+### 安装方式
+
+#### 方式一：使用 requirements.txt（推荐）
+
+```bash
+cd ComfyUI/custom_nodes/mcp-server
+pip install -r requirements.txt
+```
+
+#### 方式二：手动安装
+
+```bash
+pip install fastmcp>=1.0.0 uvicorn>=0.30.0 httpx>=0.27.0
+```
+
+#### 方式三：使用 ComfyUI Manager
+
+如果你使用 [ComfyUI Manager](https://github.com/ltdrdata/ComfyUI-Manager)，安装本插件后会自动提示安装缺失的依赖。
+
+> **注意**：如果使用 ComfyUI 便携版（Windows Portable），请使用自带的 Python 环境：
+>
+> ```bash
+> ..\..\..\python_embeded\python.exe -m pip install -r requirements.txt
+> ```
 
 ## 配置
 
