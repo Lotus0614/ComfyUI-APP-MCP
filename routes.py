@@ -3,8 +3,6 @@
 import json
 import logging
 import os
-from pathlib import Path
-
 import httpx
 from aiohttp import web
 from server import PromptServer
@@ -13,8 +11,7 @@ from . import template_manager
 
 logger = logging.getLogger(__name__)
 
-NODE_DIR_NAME = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
-API_PREFIX = f"/{NODE_DIR_NAME}/api"
+API_PREFIX = "/mcp-server/api"
 
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
 

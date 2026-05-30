@@ -204,10 +204,11 @@ async function showCreateTemplateDialog(onDone) {
         <h3 style="margin:0 0 12px;">Create Template from Workflow</h3>
         <div style="margin-bottom:8px;">
             <label style="font-size:12px;color:#aaa;">Workflow:</label>
-            <div style="display:flex;gap:8px;margin-top:4px;">
-                <select id="mcp-wf-select" style="flex:1;padding:4px;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:4px;">
-                    <option value="">-- Select a workflow --</option>
-                </select>
+            <div style="display:flex;gap:8px;margin-top:4px;position:relative;">
+                <div style="flex:1;position:relative;">
+                    <input id="mcp-wf-search" type="text" placeholder="Search workflows..." style="width:100%;padding:4px 8px;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:4px;box-sizing:border-box;" autocomplete="off" />
+                    <div id="mcp-wf-dropdown" style="display:none;position:fixed;max-height:240px;overflow-y:auto;background:#2a2a2a;border:1px solid #444;border-radius:4px;z-index:10001;margin-top:2px;"></div>
+                </div>
                 <button id="mcp-wf-refresh" style="${S.btn}font-size:11px;">Refresh</button>
             </div>
         </div>
@@ -221,37 +222,95 @@ async function showCreateTemplateDialog(onDone) {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
-    const select = modal.querySelector("#mcp-wf-select");
+    const searchInput = modal.querySelector("#mcp-wf-search");
+    const dropdown = modal.querySelector("#mcp-wf-dropdown");
     const preview = modal.querySelector("#mcp-preview");
     const saveBtn = modal.querySelector("#mcp-save");
     const cancelBtn = modal.querySelector("#mcp-cancel");
     const refreshBtn = modal.querySelector("#mcp-wf-refresh");
 
     let extractedInfo = null;
+    let allWorkflows = [];
+    let selectedWorkflow = "";
+
+    function renderDropdown(filter = "") {
+        dropdown.innerHTML = "";
+        const lower = filter.toLowerCase();
+        const matched = lower
+            ? allWorkflows.filter((w) => w.name.toLowerCase().includes(lower))
+            : allWorkflows;
+
+        if (!matched.length) {
+            dropdown.innerHTML = '<div style="padding:6px 8px;color:#888;font-size:12px;">No matching workflows</div>';
+            dropdown.style.display = "block";
+            return;
+        }
+
+        for (const w of matched) {
+            const item = document.createElement("div");
+            item.textContent = w.name;
+            item.style.cssText = "padding:6px 8px;cursor:pointer;font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+            item.title = w.name;
+            if (w.name === selectedWorkflow) {
+                item.style.background = "#3a5a3a";
+            }
+            item.addEventListener("mouseenter", () => { item.style.background = "#3a3a5a"; });
+            item.addEventListener("mouseleave", () => {
+                item.style.background = w.name === selectedWorkflow ? "#3a5a3a" : "";
+            });
+            item.addEventListener("click", () => {
+                selectedWorkflow = w.name;
+                searchInput.value = w.name;
+                dropdown.style.display = "none";
+                onWorkflowSelected(w.name);
+            });
+            dropdown.appendChild(item);
+        }
+        // Position dropdown below the search input
+        const rect = searchInput.getBoundingClientRect();
+        dropdown.style.top = rect.bottom + 2 + "px";
+        dropdown.style.left = rect.left + "px";
+        dropdown.style.width = rect.width + "px";
+        dropdown.style.display = "block";
+    }
+
+    searchInput.addEventListener("input", () => {
+        selectedWorkflow = "";
+        saveBtn.disabled = true;
+        renderDropdown(searchInput.value);
+    });
+
+    searchInput.addEventListener("focus", () => {
+        renderDropdown(searchInput.value);
+    });
+
+    document.addEventListener("click", (e) => {
+        if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.style.display = "none";
+        }
+    });
 
     async function loadWorkflows() {
-        const prev = select.value;
-        select.innerHTML = '<option value="">-- Loading... --</option>';
+        searchInput.value = "";
+        searchInput.placeholder = "Loading...";
+        searchInput.disabled = true;
+        selectedWorkflow = "";
         try {
             const wfData = await apiFetch("/workflows");
-            const workflows = wfData.workflows || [];
-            select.innerHTML = '<option value="">-- Select a workflow --</option>';
-            for (const w of workflows) {
-                const opt = document.createElement("option");
-                opt.value = w.name;
-                opt.textContent = w.name;
-                select.appendChild(opt);
-            }
-            if (prev) select.value = prev;
+            allWorkflows = wfData.workflows || [];
+            searchInput.placeholder = allWorkflows.length
+                ? "Search workflows..."
+                : "No workflows found";
         } catch (e) {
-            select.innerHTML = '<option value="">-- Error loading workflows --</option>';
+            allWorkflows = [];
+            searchInput.placeholder = "Error loading workflows";
         }
+        searchInput.disabled = false;
     }
 
     refreshBtn.addEventListener("click", loadWorkflows);
 
-    select.addEventListener("change", async () => {
-        const name = select.value;
+    async function onWorkflowSelected(name) {
         if (!name) {
             preview.innerHTML = "";
             saveBtn.disabled = true;
@@ -285,10 +344,10 @@ async function showCreateTemplateDialog(onDone) {
         } catch (e) {
             preview.innerHTML = `<span style="color:#f66;">Error: ${e.message}</span>`;
         }
-    });
+    }
 
     saveBtn.addEventListener("click", async () => {
-        const wfName = select.value;
+        const wfName = selectedWorkflow;
         if (!wfName) return;
 
         saveBtn.disabled = true;
