@@ -60,21 +60,39 @@ def _extract_readme(workflow: dict) -> str:
 
 
 def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
-    """Auto-extract inputs: widget inputs that have a 'label', with default values."""
+    """Extract inputs from linearData.inputs."""
+    nodes = workflow.get("nodes", [])
+    node_map = {n["id"]: n for n in nodes}
+
+    linear_inputs = []  # list of (node_id, widget_name)
+    extra = workflow.get("extra", {})
+    if isinstance(extra, dict):
+        linear = extra.get("linearData", {})
+        if isinstance(linear, dict):
+            li = linear.get("inputs")
+            if isinstance(li, list):
+                for item in li:
+                    # item = [node_id, widget_name]
+                    node_id = int(item[0]) if isinstance(item, list) else int(item)
+                    widget = item[1] if isinstance(item, list) and len(item) > 1 else None
+                    linear_inputs.append((node_id, widget))
+
     inputs = {}
-    for node in workflow.get("nodes", []):
-        node_id = node.get("id")
-        class_type = node.get("type", "")
+    for node_id, target_widget in linear_inputs:
+        node = node_map.get(node_id)
+        if not node:
+            continue
         widgets_values = node.get("widgets_values", [])
 
         for inp in node.get("inputs", []):
-            label = inp.get("label")
-            if not label:
-                continue
             widget_info = inp.get("widget")
             if not widget_info:
                 continue
             widget_name = widget_info.get("name", inp.get("name", ""))
+            # Only register the widget specified in linearData
+            if target_widget and widget_name != target_widget:
+                continue
+            label = inp.get("label") or widget_name
 
             entry = {
                 "node_id": node_id,
@@ -82,7 +100,6 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                 "type": inp.get("type", "STRING"),
             }
 
-            # Try to read the default value from widgets_values
             if widgets_values and node_defs:
                 default = _read_widget_default(node, widget_name, node_defs)
                 if default is not None:

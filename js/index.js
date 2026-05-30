@@ -24,7 +24,13 @@ async function apiFetch(path, options = {}) {
         headers: { "Content-Type": "application/json" },
         ...options,
     });
-    return resp.json();
+    const text = await resp.text();
+    if (!resp.ok) throw new Error(`API error (${resp.status}): ${text}`);
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        throw new Error(`Invalid JSON response: ${text.slice(0, 200)}`);
+    }
 }
 
 // ── Styles ────────────────────────────────────────────────

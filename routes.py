@@ -153,12 +153,26 @@ async def template_result(request):
 @PromptServer.instance.routes.post(f"{API_PREFIX}/templates/extract")
 async def extract_template(request):
     """Extract template info from a workflow (auto-detect inputs/README)."""
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception as e:
+        logger.error(f"[MCP] extract_template: invalid JSON body: {e}")
+        return web.json_response({"error": f"Invalid JSON: {e}"}, status=400)
     workflow = data.get("workflow")
     if not workflow:
         return web.json_response({"error": "workflow required"}, status=400)
-    info = await template_manager.extract_template_info(workflow)
-    return web.json_response(info)
+    if isinstance(workflow, str):
+        try:
+            workflow = json.loads(workflow)
+        except Exception as e:
+            logger.error(f"[MCP] extract_template: workflow is not valid JSON: {e}")
+            return web.json_response({"error": f"Invalid workflow JSON: {e}"}, status=400)
+    try:
+        info = await template_manager.extract_template_info(workflow)
+        return web.json_response(info)
+    except Exception as e:
+        logger.error(f"[MCP] extract_template error: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
 # ── MCP proxy ────────────────────────────────────────────
