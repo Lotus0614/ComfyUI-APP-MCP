@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 API_PREFIX = "/mcp-server/api"
 
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
+MCP_INTERNAL_URL = f"http://127.0.0.1:{os.environ.get('MCP_PORT', '8189')}"
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/status")
@@ -96,7 +97,7 @@ async def create_template(request):
         return web.json_response({"error": "name and workflow required"}, status=400)
     if not isinstance(workflow, dict) or "nodes" not in workflow:
         return web.json_response({"error": "Invalid workflow content (missing nodes)"}, status=400)
-    template = template_manager.save_template(name, workflow)
+    template = await template_manager.save_template(name, workflow)
     return web.json_response(template)
 
 
@@ -158,5 +159,89 @@ async def extract_template(request):
     workflow = data.get("workflow")
     if not workflow:
         return web.json_response({"error": "workflow required"}, status=400)
-    info = template_manager.extract_template_info(workflow)
+    info = await template_manager.extract_template_info(workflow)
     return web.json_response(info)
+
+
+# ── MCP proxy ────────────────────────────────────────────
+# Forward /app-mcp requests to the local MCP server so remote
+# clients can reach it through ComfyUI's port without opening
+# a second port.
+
+MCP_PATH = "/app-mcp"
+
+_HOP_BY_HOP = frozenset({
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade",
+})
+
+
+def _forward_headers(request: web.Request) -> dict[str, str]:
+    """Build upstream headers, injecting comfyui_url from the inbound Host."""
+    headers: dict[str, str] = {}
+    for k, v in request.headers.items():
+        if k.lower() not in _HOP_BY_HOP:
+            headers[k] = v
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.host)
+    headers["comfyui_url"] = f"{scheme}://{host}"
+    return headers
+
+
+async def _proxy_handler(request: web.Request) -> web.StreamResponse:
+    target = f"{MCP_INTERNAL_URL}/mcp"
+    if request.query_string:
+        target += f"?{request.query_string}"
+
+    body = await request.read()
+    logger.info(f"[MCP Proxy] {request.method} {request.path} -> {target}")
+    try:
+        async with httpx.AsyncClient() as client:
+            upstream = await client.request(
+                method=request.method,
+                url=target,
+                headers=_forward_headers(request),
+                content=body or None,
+                timeout=300,
+            )
+    except Exception as e:
+        logger.error(f"[MCP Proxy] upstream error: {e}")
+        return web.json_response({"error": f"MCP upstream error: {e}"}, status=502)
+
+    # Build response — stream for SSE, buffered otherwise
+    ct = upstream.headers.get("content-type", "")
+    if "text/event-stream" in ct:
+        resp = web.StreamResponse(
+            status=upstream.status_code,
+            headers={
+                k: v for k, v in upstream.headers.items()
+                if k.lower() not in _HOP_BY_HOP
+            },
+        )
+        await resp.prepare(request)
+        async for chunk in upstream.aiter_bytes():
+            await resp.write(chunk)
+        await resp.write_eof()
+        return resp
+
+    resp = web.Response(
+        status=upstream.status_code,
+        body=upstream.content,
+    )
+    for k, v in upstream.headers.items():
+        if k.lower() not in _HOP_BY_HOP:
+            resp.headers[k] = v
+    return resp
+
+
+@PromptServer.instance.routes.get(MCP_PATH)
+async def _mcp_proxy_get(request):
+    return await _proxy_handler(request)
+
+@PromptServer.instance.routes.post(MCP_PATH)
+async def _mcp_proxy_post(request):
+    return await _proxy_handler(request)
+
+@PromptServer.instance.routes.delete(MCP_PATH)
+async def _mcp_proxy_delete(request):
+    return await _proxy_handler(request)

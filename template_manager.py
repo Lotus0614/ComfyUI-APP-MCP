@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import contextvars
 from pathlib import Path
 
 import httpx
@@ -14,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+# Set by middleware from MCP request query param or comfyui_url header.
+# Used for media links returned to remote MCP clients.
+_comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_comfyui_public_url", default=None
+)
 
 # UI-only node types that should not be submitted for execution
 _UI_ONLY_TYPES = {
@@ -52,11 +59,14 @@ def _extract_readme(workflow: dict) -> str:
     return ""
 
 
-def _extract_inputs(workflow: dict) -> dict:
-    """Auto-extract inputs: widget inputs that have a 'label'."""
+def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
+    """Auto-extract inputs: widget inputs that have a 'label', with default values."""
     inputs = {}
     for node in workflow.get("nodes", []):
         node_id = node.get("id")
+        class_type = node.get("type", "")
+        widgets_values = node.get("widgets_values", [])
+
         for inp in node.get("inputs", []):
             label = inp.get("label")
             if not label:
@@ -65,12 +75,73 @@ def _extract_inputs(workflow: dict) -> dict:
             if not widget_info:
                 continue
             widget_name = widget_info.get("name", inp.get("name", ""))
-            inputs[label] = {
+
+            entry = {
                 "node_id": node_id,
                 "widget": widget_name,
                 "type": inp.get("type", "STRING"),
             }
+
+            # Try to read the default value from widgets_values
+            if widgets_values and node_defs:
+                default = _read_widget_default(node, widget_name, node_defs)
+                if default is not None:
+                    entry["default"] = default
+
+            inputs[label] = entry
     return inputs
+
+
+def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
+    """Read the current widget value from a node's widgets_values by widget name.
+
+    Uses the same index computation as _ui_workflow_to_api_prompt to account
+    for hidden control_after_generate widgets.
+    """
+    class_type = node.get("type", "")
+    widgets_values = node.get("widgets_values", [])
+    if not widgets_values:
+        return None
+
+    node_def = node_defs.get(class_type, {})
+    input_def = node_def.get("input", {})
+    required = input_def.get("required", {})
+    optional = input_def.get("optional", {})
+
+    # Build ordered widget names (same logic as _get_node_widget_names)
+    widget_names = []
+    for input_name in list(required.keys()) + list(optional.keys()):
+        spec = required.get(input_name) or optional.get(input_name)
+        if spec and _is_widget_input(spec):
+            widget_names.append(input_name)
+
+    # Build all_widgets with hidden controls (same logic as _ui_workflow_to_api_prompt)
+    all_widgets = []  # [(name, is_hidden)]
+    vi = 0
+    for wname in widget_names:
+        all_widgets.append((wname, False))
+        vi += 1
+        spec = required.get(wname) or optional.get(wname)
+        is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
+        if vi < len(widgets_values) and is_int_float:
+            next_val = widgets_values[vi]
+            if next_val in ("randomize", "increment", "decrement", "fixed"):
+                all_widgets.append(("_hidden_" + wname, True))
+                vi += 1
+
+    # Find the target widget and return its value
+    vi = 0
+    for wname, is_hidden in all_widgets:
+        if vi >= len(widgets_values):
+            break
+        if is_hidden:
+            vi += 1
+            continue
+        if wname == widget_name:
+            return widgets_values[vi]
+        vi += 1
+
+    return None
 
 
 def _detect_output_nodes(workflow: dict) -> dict:
@@ -165,11 +236,12 @@ def _output_type_from_comfy(comfy_type: str) -> str:
 
 
 
-def extract_template_info(workflow: dict) -> dict:
+async def extract_template_info(workflow: dict) -> dict:
     """Auto-extract template metadata from a workflow."""
+    node_defs = await _get_node_definitions()
     return {
         "description": _extract_readme(workflow),
-        "inputs": _extract_inputs(workflow),
+        "inputs": _extract_inputs(workflow, node_defs),
         "outputs": _detect_output_nodes(workflow),
     }
 
@@ -200,9 +272,9 @@ def get_template(name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_template(name: str, workflow: dict, outputs: dict | None = None) -> dict:
+async def save_template(name: str, workflow: dict, outputs: dict | None = None) -> dict:
     _ensure_dir()
-    info = extract_template_info(workflow)
+    info = await extract_template_info(workflow)
     template = {
         "name": name,
         "description": info["description"],
@@ -555,7 +627,8 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                 subfolder = item.get("subfolder", "")
                 item_type = item.get("type", "output")
                 media_type = item.get("mediaType", media_key.rstrip("s"))  # "image", "audio", "gif"
-                url = (f"{COMFYUI_URL}/view?"
+                base_url = _comfyui_public_url.get() or COMFYUI_URL
+                url = (f"{base_url}/view?"
                        f"filename={filename}"
                        f"&subfolder={subfolder}"
                        f"&type={item_type}")

@@ -165,7 +165,8 @@ async function showTemplateDetail(name) {
     const inputs = template.inputs || {};
     if (Object.keys(inputs).length) {
         for (const [k, v] of Object.entries(inputs)) {
-            html += `<div style="${S.row}margin:2px 0;"><span style="${S.label}">${k}</span><span style="font-size:11px;color:#888;">${v.type} | node ${v.node_id} → ${v.widget}</span></div>`;
+            const def = v.default !== undefined ? ` | default: ${JSON.stringify(v.default)}` : "";
+            html += `<div style="${S.row}margin:2px 0;"><span style="${S.label}">${k}</span><span style="font-size:11px;color:#888;">${v.type} | node ${v.node_id} → ${v.widget}${def}</span></div>`;
         }
     } else {
         html += '<div style="color:#888;font-size:12px;">No inputs configured</div>';

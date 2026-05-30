@@ -9,12 +9,20 @@ from pathlib import Path
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from mcp.server.transport_security import TransportSecuritySettings
+
 from .comfyui_client import ComfyUIClient
 from . import template_manager
 
 logger = logging.getLogger(__name__)
 
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
+
+# Disable DNS rebinding protection so LAN clients can connect.
+# Security is handled by ComfyUI's own --listen flag instead.
+_TRANSPORT_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,
+)
 
 
 def _format_template_result(result: dict) -> str:
@@ -79,6 +87,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "Use list_templates to see available templates, get_template to see parameters, "
             "then call run_template with the required parameters."
         ),
+        transport_security=_TRANSPORT_SECURITY,
     )
 
     # ── Template Tools ──────────────────────────────────────

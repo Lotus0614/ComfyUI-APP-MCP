@@ -77,19 +77,17 @@ pip install fastmcp>=1.0.0 uvicorn>=0.30.0 httpx>=0.27.0
 
 | 变量          | 默认值                  | 说明             |
 | ------------- | ----------------------- | ---------------- |
-| `MCP_PORT`    | `8189`                  | MCP 服务端口     |
-| `MCP_HOST`    | `127.0.0.1`             | MCP 服务监听地址 |
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI 服务地址 |
 
 ### 启动
 
-正常启动 ComfyUI，插件会自动加载并在 `8189` 端口启动 MCP 服务：
+正常启动 ComfyUI，插件会自动加载并通过 ComfyUI 端口提供 MCP 服务：
 
 ```
-MCP Server starting at http://127.0.0.1:8189/mcp
+MCP endpoint: http://127.0.0.1:8188/app-mcp
 ```
 
-MCP 端点地址：`http://127.0.0.1:8189/mcp`
+远程访问时需以 `--listen 0.0.0.0` 启动 ComfyUI：
 
 ## 使用流程
 
@@ -159,6 +157,8 @@ AI 助手通过 MCP 协议使用以下工具：
 
 ## MCP 客户端配置
 
+MCP 端点复用 ComfyUI 的端口，地址为 `http://<comfyui地址>/app-mcp`。
+
 ### Claude Desktop
 
 在 `claude_desktop_config.json` 中添加：
@@ -167,7 +167,7 @@ AI 助手通过 MCP 协议使用以下工具：
 {
     "mcpServers": {
         "comfyui": {
-            "url": "http://127.0.0.1:8189/mcp"
+            "url": "http://127.0.0.1:8188/app-mcp"
         }
     }
 }
@@ -181,7 +181,7 @@ AI 助手通过 MCP 协议使用以下工具：
 {
     "mcpServers": {
         "comfyui": {
-            "url": "http://127.0.0.1:8189/mcp"
+            "url": "http://127.0.0.1:8188/app-mcp"
         }
     }
 }
@@ -189,7 +189,23 @@ AI 助手通过 MCP 协议使用以下工具：
 
 ### 其他 MCP 客户端
 
-连接地址：`http://127.0.0.1:8189/mcp`（Streamable HTTP 传输）
+连接地址：`http://<comfyui地址>/app-mcp`（Streamable HTTP 传输）
+
+### 远程访问
+
+ComfyUI 需要以 `--listen 0.0.0.0` 启动以接受局域网连接。之后手机或其他设备直接连接即可，图片链接会自动使用正确的地址：
+
+```json
+{
+    "mcpServers": {
+        "comfyui": {
+            "url": "http://192.168.0.113:8188/app-mcp"
+        }
+    }
+}
+```
+
+> 无需手动配置 `comfyui_url`，服务端会从请求中自动推导。
 
 ## 日志
 
