@@ -107,6 +107,7 @@ function createTemplateWidget() {
                         await apiFetch(`/templates/${t.name}`, {
                             method: "PUT",
                             body: JSON.stringify({
+                                workflow: wfContent,
                                 inputs: info.inputs,
                                 outputs: info.outputs,
                                 description: info.description,

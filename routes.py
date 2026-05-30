@@ -4,7 +4,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
 from aiohttp import web
@@ -60,11 +59,11 @@ async def get_workflow_content(request):
     """Get a specific workflow's content from ComfyUI."""
     name = request.match_info["name"]
     try:
-        path = f"workflows/{name}.json"
-        encoded_path = quote(path, safe="/")
-        url = f"{COMFYUI_URL}/api/userdata/{encoded_path}"
         async with httpx.AsyncClient() as client:
-            resp = await client.get(url, timeout=10)
+            resp = await client.get(
+                f"{COMFYUI_URL}/api/userdata/workflows%2F{name}.json",
+                timeout=10,
+            )
             resp.raise_for_status()
             return web.json_response(resp.json())
     except Exception as e:
@@ -98,6 +97,8 @@ async def create_template(request):
     workflow = data.get("workflow")
     if not name or not workflow:
         return web.json_response({"error": "name and workflow required"}, status=400)
+    if not isinstance(workflow, dict) or "nodes" not in workflow:
+        return web.json_response({"error": "Invalid workflow content (missing nodes)"}, status=400)
     template = template_manager.save_template(name, workflow)
     return web.json_response(template)
 

@@ -219,6 +219,8 @@ def update_template(name: str, updates: dict) -> dict | None:
     template = get_template(name)
     if not template:
         return None
+    if "workflow" in updates:
+        template["workflow"] = updates["workflow"]
     if "outputs" in updates:
         template["outputs"] = updates["outputs"]
     if "description" in updates:
