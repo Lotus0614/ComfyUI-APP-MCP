@@ -16,7 +16,10 @@
 
 - 模板依赖 Comfyui App Mode ！需要支持 App Mode 的 ComfyUI 版本。
 - 在工作流构菜单中点击构建应用，标记输入输出节点，将输入节点重命名为AI好理解的名字。
-- 加入 Markdown 节点，将标题重命名为 [README] （只有这个标题会被提取），可以详细描述模板的功能、输入参数、输出节点等信息，方便AI理解。
+- 加入 Markdown 节点来描述模板信息：
+  - 标题重命名为 `title`：简短标题，会展示在模板列表中
+  - 标题重命名为 `description`：详细描述，仅在 AI 查询模板详情时展示
+  - 标题重命名为 `README`（兼容旧版）：同时作为 title 和 description 使用
 - 保存工作流，打开ComfyUI设置，找到 MCP Server → Templates，点击 Create from Workflow 选择已保存的工作流，系统自动提取输入参数和输出节点，点击 Create Template 完成创建。
 - 在其他支持MCP的平台添加对应MCP，类型为 streamable_http，地址为 http://127.0.0.1:8188/app-mcp。
 - 让ai列出模板测试是否能正常工作
@@ -112,13 +115,14 @@ AI 助手通过 MCP 协议使用以下工具：
 
 #### `list_templates`
 
-列出所有可用模板，返回模板名称、描述、输入/输出数量。
+列出所有可用模板，返回模板名称、标题、输入/输出数量。
 
 #### `get_template(name)`
 
 获取模板详情，包括：
 
-- `description`：模板描述（从工作流中的 README 节点提取）
+- `title`：模板标题（从工作流中的 `title` MarkdownNote 节点提取，兼容 README）
+- `description`：模板详细描述（从工作流中的 `description` MarkdownNote 节点提取，兼容 README）
 - `inputs`：可配置的输入参数列表（名称、类型、默认值）
 - `outputs`：输出节点列表
 

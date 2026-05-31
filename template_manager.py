@@ -49,14 +49,38 @@ def _ensure_dir():
 
 # ── Auto-extract from workflow ────────────────────────────
 
-def _extract_readme(workflow: dict) -> str:
-    """Extract description from MarkdownNote node with title 'README'."""
+def _extract_markdown_note(workflow: dict, note_title: str) -> str | None:
+    """Extract content from a MarkdownNote node with the given title."""
     for node in workflow.get("nodes", []):
-        if node.get("type") == "MarkdownNote" and node.get("title") == "README":
+        if node.get("type") == "MarkdownNote" and node.get("title") == note_title:
             values = node.get("widgets_values", [])
             if values:
                 return str(values[0])
-    return ""
+    return None
+
+
+def _extract_readme(workflow: dict) -> str:
+    """Extract description from MarkdownNote node with title 'README' (legacy)."""
+    return _extract_markdown_note(workflow, "README") or ""
+
+
+def _extract_title_and_description(workflow: dict) -> tuple[str, str]:
+    """Extract title and description from MarkdownNote nodes.
+
+    Looks for dedicated 'title' and 'description' nodes first.
+    Falls back to README node for backward compatibility.
+    """
+    title = _extract_markdown_note(workflow, "title")
+    description = _extract_markdown_note(workflow, "description")
+    readme = _extract_markdown_note(workflow, "README")
+
+    # Backward compat: README fills in missing title/description
+    if title is None:
+        title = readme or ""
+    if description is None:
+        description = readme or ""
+
+    return title, description
 
 
 def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
@@ -132,15 +156,28 @@ def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
         if spec and _is_widget_input(spec):
             widget_names.append(input_name)
 
-    # Build all_widgets with hidden controls (same logic as _ui_workflow_to_api_prompt)
+    # Build all_widgets with hidden controls and dynamic sub-inputs
+    # (same logic as _ui_workflow_to_api_prompt)
     all_widgets = []  # [(name, is_hidden)]
     vi = 0
     for wname in widget_names:
         all_widgets.append((wname, False))
         vi += 1
         spec = required.get(wname) or optional.get(wname)
+        is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
         is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-        if vi < len(widgets_values) and is_int_float:
+        # After a dynamic combo widget, add its active sub-inputs
+        if is_dynamic_combo and vi > 0:
+            selected_key = widgets_values[vi - 1] if vi - 1 < len(widgets_values) else None
+            combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
+            for opt in combo_options:
+                if isinstance(opt, dict) and opt.get("key") == selected_key:
+                    req = opt.get("inputs", {}).get("required", {})
+                    for sub_name in req:
+                        all_widgets.append((f"{wname}.{sub_name}", False))
+                        vi += 1
+                    break
+        elif is_int_float and vi < len(widgets_values):
             next_val = widgets_values[vi]
             if next_val in ("randomize", "increment", "decrement", "fixed"):
                 all_widgets.append(("_hidden_" + wname, True))
@@ -256,8 +293,10 @@ def _output_type_from_comfy(comfy_type: str) -> str:
 async def extract_template_info(workflow: dict) -> dict:
     """Auto-extract template metadata from a workflow."""
     node_defs = await _get_node_definitions()
+    title, description = _extract_title_and_description(workflow)
     return {
-        "description": _extract_readme(workflow),
+        "title": title,
+        "description": description,
         "inputs": _extract_inputs(workflow, node_defs),
         "outputs": _detect_output_nodes(workflow),
     }
@@ -271,9 +310,11 @@ def list_templates() -> list[dict]:
     for f in sorted(TEMPLATE_DIR.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
+            # title for list display; fall back to description for old templates
+            title = data.get("title") or data.get("description", "")
             templates.append({
                 "name": data.get("name", f.stem),
-                "description": data.get("description", ""),
+                "title": title,
                 "input_count": len(data.get("inputs", {})),
                 "output_count": len(data.get("outputs", {})),
             })
@@ -294,6 +335,7 @@ async def save_template(name: str, workflow: dict, outputs: dict | None = None) 
     info = await extract_template_info(workflow)
     template = {
         "name": name,
+        "title": info["title"],
         "description": info["description"],
         "workflow": workflow,
         "inputs": info["inputs"],
@@ -312,6 +354,8 @@ def update_template(name: str, updates: dict) -> dict | None:
         template["workflow"] = updates["workflow"]
     if "outputs" in updates:
         template["outputs"] = updates["outputs"]
+    if "title" in updates:
+        template["title"] = updates["title"]
     if "description" in updates:
         template["description"] = updates["description"]
     if "inputs" in updates:
@@ -380,7 +424,7 @@ def _set_widget_value(node: dict, widget_name: str, value,
     """Set a widget value on a node by widget name.
 
     Uses widget_names and input specs to compute the correct index in widgets_values,
-    accounting for hidden UI widgets like control_after_generate.
+    accounting for hidden UI widgets like control_after_generate and dynamic sub-inputs.
     """
     values = node.get("widgets_values", [])
     if not values:
@@ -389,17 +433,30 @@ def _set_widget_value(node: dict, widget_name: str, value,
     required = required or {}
     optional = optional or {}
 
-    if widget_names and widget_name in widget_names:
-        # Build ordered list of ALL widgets (definition + hidden)
-        # Detect hidden control_after_generate widgets by value pattern
+    if widget_names:
+        # Build ordered list of ALL widgets (definition + hidden + dynamic sub-inputs)
+        # Detect hidden control_after_generate widgets by value pattern,
+        # and dynamic sub-inputs by checking the node's inputs array.
         all_widgets = []
         vi = 0
         for wname in widget_names:
             all_widgets.append(wname)
             vi += 1
             spec = required.get(wname) or optional.get(wname)
+            is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
             is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-            if vi < len(values) and is_int_float:
+            # After a dynamic combo widget, add its active sub-inputs
+            if is_dynamic_combo and vi > 0:
+                selected_key = values[vi - 1] if vi - 1 < len(values) else None
+                combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
+                for opt in combo_options:
+                    if isinstance(opt, dict) and opt.get("key") == selected_key:
+                        req = opt.get("inputs", {}).get("required", {})
+                        for sub_name in req:
+                            all_widgets.append(f"{wname}.{sub_name}")
+                            vi += 1
+                        break
+            elif is_int_float and vi < len(values):
                 next_val = values[vi]
                 if next_val in ("randomize", "increment", "decrement", "fixed"):
                     all_widgets.append(None)
@@ -449,6 +506,7 @@ def _is_widget_input(spec) -> bool:
     - ["FLOAT", {"default": 1.0}]  → widget
     - ["STRING", {"multiline": True}]  → widget
     - ["BOOLEAN", {"default": True}]  → widget
+    - ["COMFY_DYNAMICCOMBO_V3", {...}]  → dynamic combo widget (e.g. RTX resize_type)
     - "MODEL"  → data connection (just a type string)
     - ["MODEL"]  → data connection (single-element list with a type string that's not a basic type)
     """
@@ -459,6 +517,9 @@ def _is_widget_input(spec) -> bool:
         if isinstance(first, str):
             # Basic widget types
             if first in ("INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"):
+                return True
+            # Dynamic combo widget (e.g. RTX nodes' resize_type)
+            if first.startswith("COMFY_DYNAMICCOMBO"):
                 return True
             # Combo: list of options
             if first.startswith(","):
@@ -533,8 +594,13 @@ def _ui_workflow_to_api_prompt(workflow: dict, node_defs: dict) -> dict:
         widget_values = node.get("widgets_values", [])
 
         # Key insight: widgets_values contains ALL widgets including hidden UI controls
-        # (e.g. control_after_generate after INT seed). Detect hidden widgets by
-        # scanning widgets_values for known control patterns after INT/FLOAT inputs.
+        # (e.g. control_after_generate after INT seed) and dynamic sub-inputs
+        # (e.g. resize_type.scale for COMFY_DYNAMICCOMBO_V3).
+        #
+        # For dynamic combos, widgets_values stores:
+        #   [selected_key, sub_input_value, ...]
+        # where selected_key identifies which sub-inputs are active, and the following
+        # values are the sub-input values (one per active sub-input).
         if widget_values:
             all_widgets = []  # [(name, is_hidden)]
             vi = 0
@@ -542,8 +608,27 @@ def _ui_workflow_to_api_prompt(workflow: dict, node_defs: dict) -> dict:
                 all_widgets.append((wname, False))
                 vi += 1
                 spec = required_inputs.get(wname) or optional_inputs.get(wname)
+                is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
                 is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-                if vi < len(widget_values) and is_int_float:
+                # After a dynamic combo widget, check for sub-input values.
+                # The selected key determines which sub-inputs are active.
+                # For each active sub-input, there's a value in widgets_values.
+                if is_dynamic_combo and vi > 0:
+                    selected_key = widget_values[vi - 1]
+                    # Find the selected option's sub-inputs
+                    combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
+                    sub_inputs = []
+                    for opt in combo_options:
+                        if isinstance(opt, dict) and opt.get("key") == selected_key:
+                            req = opt.get("inputs", {}).get("required", {})
+                            sub_inputs = list(req.keys())
+                            break
+                    # Add sub-input widgets (they consume values from widgets_values)
+                    for sub_name in sub_inputs:
+                        full_name = f"{wname}.{sub_name}"
+                        all_widgets.append((full_name, False))
+                        vi += 1
+                elif is_int_float and vi < len(widget_values):
                     next_val = widget_values[vi]
                     if next_val in ("randomize", "increment", "decrement", "fixed"):
                         all_widgets.append(("_hidden_" + wname, True))
