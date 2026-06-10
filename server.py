@@ -30,58 +30,15 @@ def _format_template_result(result: dict) -> str:
     if result.get("error"):
         return json.dumps(result, ensure_ascii=False)
 
-    outputs = result.get("outputs", {})
+    payload = {
+        "status": result.get("status", "completed"),
+        "prompt_id": result.get("prompt_id"),
+        "template": result.get("template"),
+        "params": result.get("params"),
+        "outputs": result.get("outputs", {}),
+    }
 
-    # Collect media and text outputs
-    all_media = []
-    text_outputs = {}
-    for output_name, node_data in outputs.items():
-        # New format: media list
-        media = node_data.get("media", [])
-        if media:
-            all_media.extend(media)
-        # Legacy format: view_urls (image-only)
-        for url in node_data.get("view_urls", []):
-            all_media.append({
-                "output_name": output_name,
-                "node_id": node_data.get("node_id"),
-                "title": node_data.get("title", output_name),
-                "url": url,
-                "type": "image",
-                "filename": "",
-            })
-        texts = node_data.get("text", [])
-        if texts:
-            text_outputs[output_name] = texts[0] if len(texts) == 1 else texts
-
-    # Build response
-    lines = []
-    if text_outputs:
-        lines.append("**Text outputs:**")
-        for name, text in text_outputs.items():
-            lines.append(f"- **{name}**: {text}")
-
-    if all_media:
-        lines.append("")
-        for item in all_media:
-            output_name = item.get("output_name", "output")
-            mtype = item.get("type", "image")
-            url = item["url"]
-            fname = item.get("filename", "")
-            if mtype == "image" or mtype == "gif":
-                lines.append(f"**{output_name}**: ![{mtype}]({url})")
-            elif mtype == "audio":
-                label = fname or mtype
-                lines.append(f"**{output_name}**: 🔊 [{label}]({url})")
-            else:
-                label = fname or mtype
-                lines.append(f"**{output_name}**: 📎 {mtype}: [{label}]({url})")
-
-    if lines:
-        return "\n".join(lines)
-
-    # Fallback: return raw JSON
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
 def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
@@ -258,7 +215,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return resp.json()
 
     @mcp.tool()
-    async def run_template(name: str, params: str, wait: bool = True) -> str:
+    async def run_template(name: str, params: str, wait: bool = True, bindings: str = "{}") -> str:
         """Execute a template with the given parameters.
 
         Args:
@@ -266,6 +223,21 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             params: JSON string of parameter values, e.g. '{"输入文本": "hello"}'.
             wait: If true (default), wait for execution to complete and return results directly.
                   If false, return immediately with prompt_id for later polling via get_template_result.
+            bindings: Optional JSON string of bindings that pull values from a previous prompt_id result.
+                Example:
+                {
+                  "image": {
+                    "from": "previous_prompt_id",
+                    "output": "SaveImage_12_output",
+                    "type": "image",
+                    "index": 0
+                  }
+                }
+                Supported binding types:
+                - text: read text[index] from the source output
+                - image: re-upload a source image output and pass the returned input filename
+                - media_filename: pass the source media filename directly
+                - media_url: pass the source media URL directly
         """
         logger.info(f"[MCP] run_template(name={name!r}, params={params}, wait={wait})")
         try:
@@ -274,7 +246,12 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             logger.error(f"[MCP] run_template → invalid JSON: {e}")
             return json.dumps({"error": f"Invalid params JSON: {e}"})
         try:
-            result = await template_manager.execute_template(name, parameters, wait=wait)
+            binding_data = json.loads(bindings)
+        except json.JSONDecodeError as e:
+            logger.error(f"[MCP] run_template → invalid bindings JSON: {e}")
+            return json.dumps({"error": f"Invalid bindings JSON: {e}"})
+        try:
+            result = await template_manager.execute_template(name, parameters, wait=wait, bindings=binding_data)
             logger.info(f"[MCP] run_template → {result.get('status', 'unknown')}")
             return _format_template_result(result)
         except Exception as e:
@@ -287,6 +264,30 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
         Args:
             pipeline: JSON string describing the template pipeline.
+                In run_templates, bindings[from] refers to a previous pipeline step id,
+                not a prompt_id. Example:
+                {
+                  "steps": [
+                    {
+                      "id": "generate",
+                      "template": "txt2img",
+                      "params": {"prompt": "a cat"}
+                    },
+                    {
+                      "id": "upscale",
+                      "template": "upscale",
+                      "params": {"scale": 2},
+                      "bindings": {
+                        "image": {
+                          "from": "generate",
+                          "output": "SaveImage_12_output",
+                          "type": "image",
+                          "index": 0
+                        }
+                      }
+                    }
+                  ]
+                }
             timeout_per_step: Max seconds to wait for each step.
         """
         logger.info(f"[MCP] run_templates(timeout_per_step={timeout_per_step})")
@@ -305,14 +306,16 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @mcp.tool()
-    async def get_template_result(name: str, prompt_id: str) -> str:
-        """Poll for template execution result. Call repeatedly until status is 'completed'.
+    async def get_template_result(name: str, prompt_id: str, wait: bool = False, timeout: float = 300) -> str:
+        """Fetch template execution result.
 
         Args:
             name: Template name.
             prompt_id: The prompt_id returned by run_template.
+            wait: If true, poll until the execution completes or times out.
+            timeout: Max seconds to wait when wait=true.
         """
-        logger.info(f"[MCP] get_template_result(name={name!r}, prompt_id={prompt_id!r})")
+        logger.info(f"[MCP] get_template_result(name={name!r}, prompt_id={prompt_id!r}, wait={wait})")
         try:
             template = template_manager.get_template(name)
             if not template:
@@ -320,7 +323,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             if template_manager.is_template_disabled(template):
                 return json.dumps({"error": f"Template '{name}' is disabled"})
             outputs = template.get("outputs", {})
-            result = await template_manager.get_template_outputs(prompt_id, outputs)
+            result = await template_manager.get_template_outputs(prompt_id, outputs, wait=wait, timeout=timeout)
             logger.info(f"[MCP] get_template_result → {result.get('status', 'unknown')}")
             return _format_template_result(result)
         except Exception as e:
@@ -372,17 +375,19 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"
             "   - By default, the call waits for completion and returns results directly.\n"
             "   - Set `wait=false` to return immediately with a `prompt_id` for later polling.\n"
+            "   - Use `bindings` when you want to reuse a historical prompt result. In run_template, `from` means a previous `prompt_id`.\n"
+            "   - The result is JSON with `status`, `prompt_id`, `template`, `params`, and `outputs`.\n"
+            "   - Reuse outputs by reading `outputs[output_name].text` or `outputs[output_name].media`.\n"
+            "   - Later, call `get_template_result(name, prompt_id)` for a non-blocking check, or `get_template_result(name, prompt_id, wait=true)` to block until completion.\n"
             "5. Call `run_templates('{\"steps\": [...]}')` to chain multiple templates together.\n"
-            "   - Use `bindings` to map a previous step output into a later step input.\n"
+            "   - In run_templates, `bindings.from` means a previous pipeline step id.\n"
             "   - Use binding type `text` for text outputs and `image` for image reuse.\n"
-            "6. Results include:\n"
-            "   - **Text outputs** from nodes like ShowText.\n"
-            "   - **Image URLs** in markdown format `![image](url)` — click to view in browser.\n"
-            "   - Image view URLs follow the format: `http://<comfyui>/view?filename=<name>&subfolder=<path>&type=output`.\n\n"
+            "   - Steps return structured outputs in the same shape as run_template.\n\n"
             "### Tips\n"
             "- If a template's inputs have changed, ask the user to click 'Refresh' in the settings panel to re-extract from the workflow.\n"
             "- For image inputs, call `upload_image(source)` first with a local path or HTTP URL, "
             "then pass the returned filename to the template's image parameter.\n"
+            "- When using bindings, first inspect the source result's `outputs` keys and choose the exact `output` name to reference.\n"
             "- Generation may take 10-120 seconds depending on the workflow and hardware."
         )
 
