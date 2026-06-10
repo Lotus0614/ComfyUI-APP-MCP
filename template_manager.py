@@ -22,6 +22,10 @@ _comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar
     "_comfyui_public_url", default=None
 )
 
+# Module-level cache for mcp_outputs, keyed by prompt_id.
+# Allows cross-call binding resolution without requiring source_outputs.
+_mcp_outputs_cache: dict[str, dict] = {}
+
 # UI-only node types that should not be submitted for execution
 _UI_ONLY_TYPES = {
     "MarkdownNote", "Note", "Reroute", "PrimitiveNode",
@@ -455,7 +459,8 @@ async def _resolve_run_bindings(bindings: dict) -> dict:
             if isinstance(source_outputs, dict) and source_outputs:
                 result_sources[from_key] = _extract_outputs(entry, source_outputs, str(from_key))
             else:
-                cached_outputs = entry.get("mcp_outputs")
+                # Check entry cache first, then module-level cache
+                cached_outputs = entry.get("mcp_outputs") or _mcp_outputs_cache.get(str(from_key))
                 if not isinstance(cached_outputs, dict):
                     raise ValueError(
                         f"Prompt result '{from_key}' cannot be used for bindings without source_outputs metadata"
@@ -553,11 +558,38 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
         completed_steps.append(step_record)
 
     final_step = completed_steps[-1] if completed_steps else {}
-    return {
+    final_outputs = final_step.get("outputs", {})
+    final_step_id = final_step.get("id", "")
+
+    # Generate binding_hint for pipeline outputs (uses step id instead of prompt_id)
+    binding_hint = {}
+    for output_name, output_data in final_outputs.items():
+        media = output_data.get("media", [])
+        text = output_data.get("text", [])
+        if media:
+            media_item = media[0]
+            binding_hint[output_name] = {
+                "from": final_step_id,
+                "output": output_name,
+                "type": "image" if media_item.get("type") in ("image", "gif") else media_item.get("type", "image"),
+                "index": 0,
+            }
+        elif text:
+            binding_hint[output_name] = {
+                "from": final_step_id,
+                "output": output_name,
+                "type": "text",
+                "index": 0,
+            }
+
+    result = {
         "status": "completed",
         "steps": completed_steps,
-        "final": final_step.get("outputs", {}),
+        "final": final_outputs,
     }
+    if binding_hint:
+        result["binding_hint"] = binding_hint
+    return result
 
 
 async def save_template(name: str, workflow: dict, outputs: dict | None = None) -> dict:
@@ -898,6 +930,7 @@ async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dic
     """Poll /history until the prompt completes or times out."""
     interval = 1.0  # poll interval in seconds
     elapsed = 0.0
+    checked_queue = False
     async with httpx.AsyncClient() as client:
         while elapsed < timeout:
             try:
@@ -912,6 +945,26 @@ async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dic
                     if status.get("status_str") == "error":
                         return {"error": "Execution failed", "prompt_id": prompt_id,
                                 "details": status.get("messages", [])}
+                elif elapsed >= 3.0 and not checked_queue:
+                    # After 3s, check if the prompt is in the queue
+                    # If not in queue AND not in history, the prompt_id is likely invalid
+                    checked_queue = True
+                    try:
+                        queue_resp = await client.get(f"{COMFYUI_URL}/queue", timeout=10)
+                        queue_resp.raise_for_status()
+                        queue_data = queue_resp.json()
+                        queue_ids = set()
+                        for item in queue_data.get("queue_pending", []):
+                            if isinstance(item, list) and len(item) >= 2:
+                                queue_ids.add(item[1])
+                        for item in queue_data.get("queue_running", []):
+                            if isinstance(item, list) and len(item) >= 2:
+                                queue_ids.add(item[1])
+                        if prompt_id not in queue_ids:
+                            return {"error": f"Prompt '{prompt_id}' not found in queue or history",
+                                    "prompt_id": prompt_id}
+                    except Exception:
+                        pass  # Queue check failed, continue polling
             except Exception as e:
                 logger.warning(f"Poll error: {e}")
             await asyncio.sleep(interval)
@@ -961,10 +1014,9 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
             continue
         output_meta = output_meta_by_node_id.get(node_id, {})
         name = output_meta.get("output_name") or node_names.get(node_id, f"node_{node_id}")
-        node_result = dict(node_output)
         node_title = output_meta.get("title") or node_names.get(node_id, f"node_{node_id}")
 
-        # Build view_urls for media entries (images, audio, gifs, etc.)
+        # Build simplified media entries (images, audio, gifs, etc.)
         media_urls = []
         for media_key in ("images", "audio", "gifs"):
             items = node_output.get(media_key, [])
@@ -981,18 +1033,26 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                        f"&subfolder={subfolder}"
                        f"&type={item_type}")
                 media_urls.append({
-                    "output_name": name,
-                    "node_id": output_meta.get("node_id", node_id),
-                    "title": node_title,
                     "url": url,
                     "type": media_type,
                     "filename": filename,
                     "subfolder": subfolder,
                     "item_type": item_type,
                 })
+        # Build simplified output: keep text, add media, remove raw ComfyUI data
+        node_result = {}
+        if node_output.get("text"):
+            node_result["text"] = node_output["text"]
         if media_urls:
             node_result["media"] = media_urls
-
+            # Generate markdown for easy rendering
+            first_media = media_urls[0]
+            media_url = first_media.get("url", "")
+            media_type = first_media.get("type", "image")
+            if media_type in ("image", "gif"):
+                node_result["markdown"] = f"![{name}]({media_url})"
+            elif media_type == "audio":
+                node_result["markdown"] = f"[🔊 {name}]({media_url})"
         result[name] = node_result
 
     result_payload = {
@@ -1001,6 +1061,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
         "outputs": result,
     }
     entry["mcp_outputs"] = result
+    _mcp_outputs_cache[prompt_id] = result
     return result_payload
 
 
