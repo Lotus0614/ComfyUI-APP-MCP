@@ -72,7 +72,8 @@ async def get_workflow_content(request):
 @PromptServer.instance.routes.get(f"{API_PREFIX}/templates")
 async def list_templates(request):
     """List all templates."""
-    return web.json_response({"templates": template_manager.list_templates()})
+    include_disabled = request.query.get("include_disabled") in {"1", "true", "yes"}
+    return web.json_response({"templates": template_manager.list_templates(include_disabled=include_disabled)})
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/templates/{{name}}")
@@ -82,6 +83,8 @@ async def get_template(request):
     template = template_manager.get_template(name)
     if not template:
         return web.json_response({"error": "Not found"}, status=404)
+    if template_manager.is_template_disabled(template) and request.query.get("include_disabled") not in {"1", "true", "yes"}:
+        return web.json_response({"error": "Template disabled"}, status=403)
     return web.json_response(template)
 
 
@@ -142,6 +145,8 @@ async def template_result(request):
     template = template_manager.get_template(name)
     if not template:
         return web.json_response({"error": "Template not found"}, status=404)
+    if template_manager.is_template_disabled(template):
+        return web.json_response({"error": "Template disabled"}, status=403)
     outputs = template.get("outputs", {})
     try:
         result = await template_manager.get_template_outputs(prompt_id, outputs)

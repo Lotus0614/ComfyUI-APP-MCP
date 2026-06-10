@@ -304,17 +304,26 @@ async def extract_template_info(workflow: dict) -> dict:
 
 # ── Template CRUD ─────────────────────────────────────────
 
-def list_templates() -> list[dict]:
+def is_template_disabled(template: dict) -> bool:
+    return bool(template.get("disabled", False))
+
+
+def list_templates(include_disabled: bool = False) -> list[dict]:
     _ensure_dir()
     templates = []
     for f in sorted(TEMPLATE_DIR.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
+            disabled = is_template_disabled(data)
+            if disabled and not include_disabled:
+                continue
             # title for list display; fall back to description for old templates
             title = data.get("title") or data.get("description", "")
             templates.append({
                 "name": data.get("name", f.stem),
                 "title": title,
+                "description": data.get("description", ""),
+                "disabled": disabled,
                 "input_count": len(data.get("inputs", {})),
                 "output_count": len(data.get("outputs", {})),
             })
@@ -337,6 +346,7 @@ async def save_template(name: str, workflow: dict, outputs: dict | None = None) 
         "name": name,
         "title": info["title"],
         "description": info["description"],
+        "disabled": False,
         "workflow": workflow,
         "inputs": info["inputs"],
         "outputs": outputs or info["outputs"],
@@ -360,6 +370,8 @@ def update_template(name: str, updates: dict) -> dict | None:
         template["description"] = updates["description"]
     if "inputs" in updates:
         template["inputs"] = updates["inputs"]
+    if "disabled" in updates:
+        template["disabled"] = bool(updates["disabled"])
     path = TEMPLATE_DIR / f"{name}.json"
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
     return template
@@ -757,6 +769,9 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
     if not template:
         logger.warning(f"[Template] not found: {name}")
         return {"error": f"Template '{name}' not found"}
+    if is_template_disabled(template):
+        logger.warning(f"[Template] disabled: {name}")
+        return {"error": f"Template '{name}' is disabled"}
 
     inputs = template.get("inputs", {})
     outputs = template.get("outputs", {})

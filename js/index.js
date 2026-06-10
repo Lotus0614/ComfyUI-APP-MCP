@@ -70,7 +70,7 @@ function createTemplateWidget() {
     async function loadTemplates() {
         listEl.innerHTML = "Loading...";
         try {
-            const data = await apiFetch("/templates");
+            const data = await apiFetch("/templates?include_disabled=1");
             listEl.innerHTML = "";
             if (!data.templates?.length) {
                 listEl.innerHTML = '<div style="color:#888;font-size:12px;">No templates yet. Click "Create from Workflow" to create one.</div>';
@@ -82,11 +82,11 @@ function createTemplateWidget() {
 
                 const nameEl = document.createElement("span");
                 nameEl.textContent = t.name;
-                nameEl.style.cssText = "font-size:13px;font-weight:bold;";
+                nameEl.style.cssText = `font-size:13px;font-weight:bold;${t.disabled ? "color:#888;text-decoration:line-through;" : ""}`;
 
                 const infoEl = document.createElement("span");
-                infoEl.textContent = `${t.input_count} in / ${t.output_count} out`;
-                infoEl.style.cssText = "font-size:11px;color:#888;";
+                infoEl.textContent = `${t.input_count} in / ${t.output_count} out${t.disabled ? " | disabled" : ""}`;
+                infoEl.style.cssText = `font-size:11px;color:${t.disabled ? "#b66" : "#888"};`;
 
                 const descEl = document.createElement("span");
                 descEl.textContent = t.description || "";
@@ -97,6 +97,25 @@ function createTemplateWidget() {
                 viewBtn.textContent = "Details";
                 viewBtn.style.cssText = "padding:2px 8px;cursor:pointer;font-size:11px;";
                 viewBtn.addEventListener("click", () => showTemplateDetail(t.name));
+
+                const toggleBtn = document.createElement("button");
+                toggleBtn.textContent = t.disabled ? "Enable" : "Disable";
+                toggleBtn.style.cssText = `padding:2px 8px;cursor:pointer;font-size:11px;${t.disabled ? "color:#6d6;" : "color:#fb6;"}`;
+                toggleBtn.addEventListener("click", async () => {
+                    toggleBtn.textContent = "...";
+                    toggleBtn.disabled = true;
+                    try {
+                        await apiFetch(`/templates/${t.name}`, {
+                            method: "PUT",
+                            body: JSON.stringify({ disabled: !t.disabled }),
+                        });
+                        loadTemplates();
+                    } catch (e) {
+                        alert(`Update failed: ${e.message}`);
+                        toggleBtn.textContent = t.disabled ? "Enable" : "Disable";
+                        toggleBtn.disabled = false;
+                    }
+                });
 
                 const refreshBtn = document.createElement("button");
                 refreshBtn.textContent = "Refresh";
@@ -137,7 +156,7 @@ function createTemplateWidget() {
                     }
                 });
 
-                row.append(nameEl, infoEl, descEl, viewBtn, refreshBtn, delBtn);
+                row.append(nameEl, infoEl, descEl, viewBtn, refreshBtn, toggleBtn, delBtn);
                 listEl.appendChild(row);
             }
         } catch (e) {
@@ -155,7 +174,7 @@ function createTemplateWidget() {
 // ── Template detail dialog ────────────────────────────────
 
 async function showTemplateDetail(name) {
-    const template = await apiFetch(`/templates/${name}`);
+    const template = await apiFetch(`/templates/${name}?include_disabled=1`);
     if (template.error) return alert(template.error);
 
     const overlay = document.createElement("div");

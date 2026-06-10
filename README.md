@@ -115,7 +115,7 @@ AI 助手通过 MCP 协议使用以下工具：
 
 #### `list_templates`
 
-列出所有可用模板，返回模板名称、标题、输入/输出数量。
+列出所有可用模板，返回模板名称、标题、输入/输出数量。已禁用的模板不会出现在结果中。
 
 #### `get_template(name)`
 
@@ -126,6 +126,8 @@ AI 助手通过 MCP 协议使用以下工具：
 - `inputs`：可配置的输入参数列表（名称、类型、默认值）
 - `outputs`：输出节点列表
 
+已禁用的模板不可查询，调用会返回错误。
+
 #### `run_template(name, params, wait=true)`
 
 执行模板，传入参数值。
@@ -133,6 +135,8 @@ AI 助手通过 MCP 协议使用以下工具：
 - `name`：模板名称
 - `params`：JSON 格式的参数值，如 `'{"positive_prompt": "a cat", "seed": 42}'`
 - `wait`：是否等待执行完成（默认 `true`）。等待完成后直接返回格式化结果
+
+已禁用的模板不可运行，调用会返回错误。
 
 返回结果包含：
 
@@ -152,6 +156,13 @@ AI 助手通过 MCP 协议使用以下工具：
 
 上传后返回文件名，填入模板参数即可使用。
 
+#### `list_models(folder="")`
+
+查询 ComfyUI 模型目录或指定目录下的模型列表。
+
+- 不传 `folder`：返回可查询的模型目录
+- 传 `folder`：返回该目录下的模型文件，如 `checkpoints`、`loras`、`vae`、`controlnet`
+
 #### `get_template_result(name, prompt_id)`
 
 轮询获取执行结果（当 `wait=false` 时使用）。
@@ -161,7 +172,7 @@ AI 助手通过 MCP 协议使用以下工具：
 在 **Settings → MCP Server** 中：
 
 - **Status**：查看 MCP 服务状态和连接地址
-- **Templates**：查看、刷新、删除模板
+- **Templates**：查看、刷新、禁用/启用、删除模板
 
 ## MCP 客户端配置
 
