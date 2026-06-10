@@ -253,6 +253,8 @@ AI 助手通过 MCP 协议使用以下工具：
 
 - **Status**：查看 MCP 服务状态和连接地址
 - **Templates**：查看、刷新、禁用/启用、删除模板
+- **Auto Extract Templates**：扫描所有工作流，自动为包含 `title` Markdown 节点且尚未存在模板的工作流创建模板
+- **Batch Refresh Templates**：对当前所有模板执行批量刷新，从同名工作流重新提取输入、输出、标题和描述
 
 ## MCP 客户端配置
 
