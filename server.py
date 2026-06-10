@@ -118,6 +118,9 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             if not template:
                 logger.warning(f"[MCP] get_template → not found: {name}")
                 return json.dumps({"error": f"Template '{name}' not found"})
+            if template_manager.is_template_disabled(template):
+                logger.warning(f"[MCP] get_template → disabled: {name}")
+                return json.dumps({"error": f"Template '{name}' is disabled"})
             return json.dumps({
                 "name": template["name"],
                 "description": template.get("description", ""),
@@ -148,6 +151,28 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         except Exception as e:
             logger.error(f"[MCP] upload_image error: {e}")
             return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def list_models(folder: str = "") -> str:
+        """List ComfyUI model folders or models in a specific folder.
+
+        Args:
+            folder: Optional ComfyUI model folder name, e.g. "checkpoints", "loras",
+                    "vae", "controlnet". If omitted, returns available model folders.
+        """
+        folder = folder.strip().strip("/")
+        logger.info(f"[MCP] list_models(folder={folder!r})")
+        try:
+            if not folder:
+                folders = await client.list_model_folders()
+                logger.info(f"[MCP] list_models → {len(folders)} folders")
+                return json.dumps({"folders": folders}, ensure_ascii=False)
+            models = await client.list_models(folder)
+            logger.info(f"[MCP] list_models → {len(models)} models in {folder}")
+            return json.dumps({"folder": folder, "models": models}, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"[MCP] list_models error: {e}")
+            return json.dumps({"error": str(e), "folder": folder}, ensure_ascii=False)
 
     async def _read_image(source: str) -> tuple[str, bytes]:
         """Read image from various sources, return (filename, bytes)."""
@@ -237,6 +262,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             template = template_manager.get_template(name)
             if not template:
                 return json.dumps({"error": f"Template '{name}' not found"})
+            if template_manager.is_template_disabled(template):
+                return json.dumps({"error": f"Template '{name}' is disabled"})
             outputs = template.get("outputs", {})
             result = await template_manager.get_template_outputs(prompt_id, outputs)
             logger.info(f"[MCP] get_template_result → {result.get('status', 'unknown')}")
