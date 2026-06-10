@@ -339,6 +339,25 @@ def get_template(name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def read_template_doc(name: str, title: str) -> dict:
+    template = get_template(name)
+    if not template:
+        return {"error": f"Template '{name}' not found"}
+    if is_template_disabled(template):
+        return {"error": f"Template '{name}' is disabled"}
+
+    workflow = template.get("workflow", {})
+    content = _extract_markdown_note(workflow, title)
+    if content is None:
+        return {"error": f"Document '{title}' not found in template '{name}'"}
+
+    return {
+        "template": name,
+        "title": title,
+        "content": content,
+    }
+
+
 async def save_template(name: str, workflow: dict, outputs: dict | None = None) -> dict:
     _ensure_dir()
     info = await extract_template_info(workflow)
