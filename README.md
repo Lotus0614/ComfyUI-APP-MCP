@@ -125,21 +125,54 @@ AI 助手通过 MCP 协议使用以下工具：
 
 已禁用的模板不可读取模板文档，调用会返回错误。
 
-#### `run_template(name, params, wait=true)`
+#### `run_template(name, params, wait=true, bindings="{}")`
 
 执行模板，传入参数值。
 
 - `name`：模板名称
 - `params`：JSON 格式的参数值，如 `'{"positive_prompt": "a cat", "seed": 42}'`
 - `wait`：是否等待执行完成（默认 `true`）。等待完成后直接返回格式化结果
+- `bindings`：可选 JSON 字符串，用于从某个历史 `prompt_id` 的返回结果中取值并自动填入当前模板参数
 
 已禁用的模板不可运行，调用会返回错误。
 
-返回结果包含：
+`bindings` 示例：
 
-- 文本输出：直接展示
-- 图片输出：Markdown 图片链接 `![image](url)`
-- 音频输出：`🔊 **Audio**: [filename](url)`
+```json
+{
+  "image": {
+    "from": "previous_prompt_id",
+    "output": "SaveImage_12_output",
+    "type": "image",
+    "index": 0
+  }
+}
+```
+
+如果来源 `prompt_id` 的历史结果里没有缓存过结构化输出，可以额外传 `source_outputs` 来提供输出名映射：
+
+```json
+{
+  "image": {
+    "from": "previous_prompt_id",
+    "output": "SaveImage_12_output",
+    "type": "image",
+    "index": 0,
+    "source_outputs": {
+      "SaveImage_12_output": {
+        "node_id": 12,
+        "title": "SaveImage"
+      }
+    }
+  }
+}
+```
+
+返回结果包含更适合 AI 继续处理的结构化字段：
+
+- `status`、`prompt_id`、`template`
+- `params`：本次实际执行参数（包含 bindings 解析后的结果）
+- `outputs`：完整输出结构
 
 #### `run_templates(pipeline, timeout_per_step=300)`
 
@@ -183,6 +216,8 @@ AI 助手通过 MCP 协议使用以下工具：
   - `media_filename`：直接传上游媒体文件名
   - `media_url`：直接传上游媒体 URL
 
+这里的 `from` 指向的是流水线中的步骤 `id`；而 `run_template(..., bindings=...)` 里的 `from` 指向的是历史 `prompt_id`。
+
 执行失败时会返回失败步骤和已完成步骤结果，执行成功时返回所有步骤的结构化结果与最后一步输出。
 
 #### `upload_image(source, overwrite=true)`
@@ -204,9 +239,13 @@ AI 助手通过 MCP 协议使用以下工具：
 - 不传 `folder`：返回可查询的模型目录
 - 传 `folder`：返回该目录下的模型文件，如 `checkpoints`、`loras`、`vae`、`controlnet`
 
-#### `get_template_result(name, prompt_id)`
+#### `get_template_result(name, prompt_id, wait=false, timeout=300)`
 
-轮询获取执行结果（当 `wait=false` 时使用）。
+获取执行结果。
+
+- `wait=false`：立即返回当前状态，适合手动轮询
+- `wait=true`：阻塞等待直到执行完成或超时
+- `timeout`：等待超时时间，单位秒，默认 `300`
 
 ### 3. ComfyUI 前端管理
 

@@ -357,6 +357,13 @@ def read_template_doc(name: str, title: str) -> dict:
         "content": content,
     }
 
+async def _fetch_history_entry(prompt_id: str) -> dict | None:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+        resp.raise_for_status()
+        history = resp.json()
+    return history.get(prompt_id)
+
 
 async def _upload_media_to_input(media_item: dict) -> dict:
     """Download a generated media file from ComfyUI output storage and upload it to input."""
@@ -389,31 +396,31 @@ async def _upload_media_to_input(media_item: dict) -> dict:
         return upload_resp.json()
 
 
-def _resolve_binding_value(step_results: dict, binding: dict):
-    """Resolve a pipeline binding against previously completed step results."""
-    from_step = binding.get("from")
+async def _resolve_binding_value(result_sources: dict, binding: dict):
+    """Resolve a binding against previously completed structured results."""
+    from_key = binding.get("from")
     output_name = binding.get("output")
     binding_type = binding.get("type")
     index = int(binding.get("index", 0))
 
-    if from_step not in step_results:
-        raise ValueError(f"Binding source step '{from_step}' not found")
+    if from_key not in result_sources:
+        raise ValueError(f"Binding source '{from_key}' not found")
 
-    outputs = step_results[from_step].get("outputs", {})
+    outputs = result_sources[from_key].get("outputs", {})
     if output_name not in outputs:
-        raise ValueError(f"Output '{output_name}' not found in step '{from_step}'")
+        raise ValueError(f"Output '{output_name}' not found in source '{from_key}'")
 
     output_data = outputs[output_name]
 
     if binding_type == "text":
         texts = output_data.get("text", [])
         if index >= len(texts):
-            raise ValueError(f"Text output index {index} out of range for '{output_name}' in step '{from_step}'")
+            raise ValueError(f"Text output index {index} out of range for '{output_name}' in source '{from_key}'")
         return texts[index]
 
     media = output_data.get("media", [])
     if index >= len(media):
-        raise ValueError(f"Media output index {index} out of range for '{output_name}' in step '{from_step}'")
+        raise ValueError(f"Media output index {index} out of range for '{output_name}' in source '{from_key}'")
 
     media_item = media[index]
     if binding_type == "media_url":
@@ -422,10 +429,50 @@ def _resolve_binding_value(step_results: dict, binding: dict):
         return media_item.get("filename", "")
     if binding_type == "image":
         if media_item.get("type") not in {"image", "gif"}:
-            raise ValueError(f"Binding '{output_name}' from step '{from_step}' is not an image output")
+            raise ValueError(f"Binding '{output_name}' from source '{from_key}' is not an image output")
         return media_item
 
     raise ValueError(f"Unsupported binding type '{binding_type}'")
+
+
+async def _resolve_run_bindings(bindings: dict) -> dict:
+    if not isinstance(bindings, dict):
+        raise ValueError("bindings must be an object")
+
+    result_sources = {}
+    resolved_params = {}
+    for param_name, binding in bindings.items():
+        if not isinstance(binding, dict):
+            raise ValueError(f"Binding for param '{param_name}' must be an object")
+        from_key = binding.get("from")
+        if not from_key:
+            raise ValueError(f"Binding for param '{param_name}' requires a non-empty 'from'")
+        if from_key not in result_sources:
+            entry = await _fetch_history_entry(str(from_key))
+            if not entry:
+                raise ValueError(f"Prompt result '{from_key}' not found")
+            source_outputs = binding.get("source_outputs")
+            if isinstance(source_outputs, dict) and source_outputs:
+                result_sources[from_key] = _extract_outputs(entry, source_outputs, str(from_key))
+            else:
+                cached_outputs = entry.get("mcp_outputs")
+                if not isinstance(cached_outputs, dict):
+                    raise ValueError(
+                        f"Prompt result '{from_key}' cannot be used for bindings without source_outputs metadata"
+                    )
+                result_sources[from_key] = {
+                    "status": "completed",
+                    "prompt_id": str(from_key),
+                    "outputs": cached_outputs,
+                }
+
+        resolved_value = await _resolve_binding_value(result_sources, binding)
+        if binding.get("type") == "image":
+            upload_result = await _upload_media_to_input(resolved_value)
+            resolved_params[param_name] = upload_result.get("name", "")
+        else:
+            resolved_params[param_name] = resolved_value
+    return resolved_params
 
 
 async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
@@ -465,7 +512,7 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
             for param_name, binding in bindings.items():
                 if not isinstance(binding, dict):
                     raise ValueError(f"Binding for param '{param_name}' in step '{step_id}' must be an object")
-                resolved_value = _resolve_binding_value(step_results, binding)
+                resolved_value = await _resolve_binding_value(step_results, binding)
                 if binding.get("type") == "image":
                     upload_result = await _upload_media_to_input(resolved_value)
                     resolved_params[param_name] = upload_result.get("name", "")
@@ -948,10 +995,16 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
 
         result[name] = node_result
 
-    return {"status": "completed", "prompt_id": prompt_id, "outputs": result}
+    result_payload = {
+        "status": "completed",
+        "prompt_id": prompt_id,
+        "outputs": result,
+    }
+    entry["mcp_outputs"] = result
+    return result_payload
 
 
-async def execute_template(name: str, params: dict, wait: bool = True, timeout: float = 300) -> dict:
+async def execute_template(name: str, params: dict, wait: bool = True, timeout: float = 300, bindings: dict | None = None) -> dict:
     """Execute a template with given parameters.
 
     Args:
@@ -972,6 +1025,11 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
     inputs = template.get("inputs", {})
     outputs = template.get("outputs", {})
     workflow = template.get("workflow", {})
+    params = dict(params)
+
+    if bindings:
+        resolved_binding_params = await _resolve_run_bindings(bindings)
+        params.update(resolved_binding_params)
 
     # Get node definitions from ComfyUI (needed for widget index computation)
     node_defs = await _get_node_definitions()
@@ -1006,7 +1064,12 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
     logger.info(f"[Template] Prompt queued: {prompt_id}")
 
     if not wait:
-        return {"prompt_id": prompt_id, "status": "queued"}
+        return {
+            "prompt_id": prompt_id,
+            "status": "queued",
+            "template": name,
+            "params": params,
+        }
 
     # Poll for completion
     result = await _wait_for_result(prompt_id, outputs, timeout)
@@ -1014,8 +1077,14 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
     return result
 
 
-async def get_template_outputs(prompt_id: str, outputs: dict) -> dict:
-    """Fetch execution results and extract output values."""
+async def get_template_outputs(prompt_id: str, outputs: dict, wait: bool = False, timeout: float = 300) -> dict:
+    """Fetch execution results and extract output values.
+
+    If wait is True, poll until completion or timeout.
+    """
+    if wait:
+        return await _wait_for_result(prompt_id, outputs, timeout)
+
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
         resp.raise_for_status()

@@ -142,21 +142,54 @@ Reads a template documentation section by title for progressive disclosure of mo
 
 Disabled templates cannot expose template docs.
 
-#### `run_template(name, params, wait=true)`
+#### `run_template(name, params, wait=true, bindings="{}")`
 
 Executes a template with parameter values.
 
 - `name`: template name
 - `params`: JSON string of parameter values, for example `'{"positive_prompt": "a cat", "seed": 42}'`
 - `wait`: whether to wait for completion, defaults to `true`
+- `bindings`: optional JSON string used to pull values from a previous `prompt_id` result and inject them into current parameters
 
 Disabled templates cannot be run.
 
-Return values may include:
+Example `bindings`:
 
-- Text outputs rendered directly
-- Image outputs as Markdown image links such as `![image](url)`
-- Audio outputs as links
+```json
+{
+  "image": {
+    "from": "previous_prompt_id",
+    "output": "SaveImage_12_output",
+    "type": "image",
+    "index": 0
+  }
+}
+```
+
+If the source `prompt_id` history does not contain cached structured outputs, you can also provide `source_outputs` to supply the output-name mapping:
+
+```json
+{
+  "image": {
+    "from": "previous_prompt_id",
+    "output": "SaveImage_12_output",
+    "type": "image",
+    "index": 0,
+    "source_outputs": {
+      "SaveImage_12_output": {
+        "node_id": 12,
+        "title": "SaveImage"
+      }
+    }
+  }
+}
+```
+
+The response now includes AI-friendly structured fields:
+
+- `status`, `prompt_id`, `template`
+- `params`: actual execution params after bindings are resolved
+- `outputs`: full structured output payload
 
 #### `run_templates(pipeline, timeout_per_step=300)`
 
@@ -200,6 +233,8 @@ Runs multiple templates sequentially and binds outputs from earlier steps into l
   - `media_filename`: pass the upstream media filename directly
   - `media_url`: pass the upstream media URL directly
 
+Here, `from` refers to a pipeline step `id`; in `run_template(..., bindings=...)`, `from` refers to a historical `prompt_id`.
+
 On failure, the tool returns the failed step and all completed step results. On success, it returns the full step list and the final step outputs.
 
 #### `upload_image(source, overwrite=true)`
@@ -221,9 +256,13 @@ Lists ComfyUI model folders or models inside a specific folder.
 - Without `folder`: returns available model directories
 - With `folder`: returns models in that directory, such as `checkpoints`, `loras`, `vae`, or `controlnet`
 
-#### `get_template_result(name, prompt_id)`
+#### `get_template_result(name, prompt_id, wait=false, timeout=300)`
 
-Polls for execution results when `wait=false` was used in `run_template`.
+Fetches execution results.
+
+- `wait=false`: return the current status immediately for manual polling
+- `wait=true`: block until completion or timeout
+- `timeout`: wait timeout in seconds, default `300`
 
 ## ComfyUI Frontend Management
 
