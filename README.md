@@ -1,43 +1,44 @@
 # ComfyUI MCP Server
 
-一个 ComfyUI 自定义节点插件，将 ComfyUI 应用封装为 **模板（Template）**，通过 MCP（Model Context Protocol）协议让 AI 助手（Claude、Cursor 等）直接调用 ComfyUI 进行图片、音频等多媒体生成。
+[中文](./README.md) | [English](./README_EN.md)
+
+一个 ComfyUI 插件，把 ComfyUI 工作流包装成可由 MCP 调用的模板，让 AI 助手直接把 ComfyUI 当成一个“可查询、可执行、可串联”的多媒体能力服务来使用。
+
+主要能力：
+
+- 模板化输入输出，AI 不需要理解 ComfyUI 节点图
+- 支持配置模板文档，可对文档进行渐进式披露
+- 支持多模板串联执行，把上一步输出传给下一步输入
+- 支持查询 `checkpoints`、`loras` 等模型目录
 
 ## 核心概念
 
-### 模板（Template）
-
 模板 = ComfyUI 应用 + 自动提取的输入/输出定义。
 
-- **输入（Inputs）**：从工作流中标记为 `linearData.inputs` 的节点自动提取，AI 只需提供参数值即可
-- **输出（Outputs）**：从工作流中 `linearData.outputs` 标记的节点提取，生成完成后返回结果
-- AI 无需了解 ComfyUI 内部结构，只需调用 `run_template` 传入参数
+- **输入（Inputs）**：从工作流中标记为 `linearData.inputs` 的节点自动提取
+- **输出（Outputs）**：从工作流中 `linearData.outputs` 标记的节点提取
+- AI 只需要传参数和读取结果，不需要理解 ComfyUI 内部节点图
 
-### 如何创建模板
+模板文档约定：
 
-- 模板依赖 Comfyui App Mode ！需要支持 App Mode 的 ComfyUI 版本。
-- 在工作流构菜单中点击构建应用，标记输入输出节点，将输入节点重命名为AI好理解的名字。
-- 加入 Markdown 节点来描述模板信息：
-  - 标题重命名为 `title`：简短标题，会展示在模板列表中
-  - 标题重命名为 `description`：详细描述，仅在 AI 查询模板详情时展示
-  - 其他 Markdown 节点可作为按需文档，通过 `read_template_doc(name, title)` 渐进式读取
-- 保存工作流，打开ComfyUI设置，找到 MCP Server → Templates，点击 Create from Workflow 选择已保存的工作流，系统自动提取输入参数和输出节点，点击 Create Template 完成创建。
-- 在其他支持MCP的平台添加对应MCP，类型为 streamable_http，地址为 http://127.0.0.1:8188/app-mcp。
-- 让ai列出模板测试是否能正常工作
+- `title`：模板标题，展示在模板列表
+- `description`：模板简介，展示在模板详情
+- 其他 Markdown 节点：作为可按需读取的模板文档，通过 `read_template_doc(name, title)` 获取
 
-```
-ComfyUI/
-  custom_nodes/
-    mcp-server/
-      __init__.py
-      server.py
-      template_manager.py
-      comfyui_client.py
-      routes.py
-      js/
-        index.js
-      skill_guide.md
-      README.md
-```
+这种设计可以让模板默认保持简洁，同时在需要时再展开更详细的说明、示例、提示词规范或注意事项。
+
+## 快速开始
+
+1. 在 ComfyUI 中把工作流做成 App，标记输入输出节点，并把输入节点命名成 AI 容易理解的参数名。
+2. 加入 Markdown 节点描述模板：
+   - 标题为 `title`：简短标题
+   - 标题为 `description`：模板说明
+   - 其他标题：作为按需读取的模板文档
+3. 在 ComfyUI 前端 **Settings → MCP Server → Templates** 中点击 **Create from Workflow** 创建模板。
+4. 在 MCP 客户端中接入 `http://127.0.0.1:8188/app-mcp`。
+5. 先调用 `list_templates()` 验证模板可见，再调用 `get_template()`、`run_template()` 或 `run_templates()` 使用。
+
+> 模板依赖 ComfyUI App Mode，需要使用支持 App Mode 的 ComfyUI 版本。
 
 ## 安装依赖
 
@@ -96,20 +97,7 @@ MCP endpoint: http://127.0.0.1:8188/app-mcp
 python main.py --listen
 ```
 
-## 使用流程
-
-### 1. 创建模板
-
-在 ComfyUI 前端 **Settings → MCP Server → Templates** 中：
-
-1. 点击 **Create from Workflow**
-2. 从下拉列表选择已保存的工作流
-3. 系统自动提取输入参数和输出节点
-4. 点击 **Create Template** 完成创建
-
-也可以通过前端对已有模板点 **Refresh** 重新提取输入/输出定义。
-
-### 2. AI 调用模板
+## 工具列表
 
 AI 助手通过 MCP 协议使用以下工具：
 
@@ -152,6 +140,50 @@ AI 助手通过 MCP 协议使用以下工具：
 - 文本输出：直接展示
 - 图片输出：Markdown 图片链接 `![image](url)`
 - 音频输出：`🔊 **Audio**: [filename](url)`
+
+#### `run_templates(pipeline, timeout_per_step=300)`
+
+按顺序运行多个模板，并将上一步或任意前序步骤的输出绑定到后续步骤输入。
+
+- `pipeline`：JSON 字符串，格式如下：
+
+```json
+{
+  "steps": [
+    {
+      "id": "generate",
+      "template": "txt2img",
+      "params": {
+        "prompt": "a cat"
+      }
+    },
+    {
+      "id": "upscale",
+      "template": "upscale",
+      "params": {
+        "scale": 2
+      },
+      "bindings": {
+        "image": {
+          "from": "generate",
+          "output": "SaveImage_12_output",
+          "type": "image",
+          "index": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+- `timeout_per_step`：每一步的超时时间，单位秒，默认 `300`
+- `bindings` 支持的 `type`：
+  - `text`：读取上游 `text[index]`
+  - `image`：读取上游图片媒体并重新上传到 ComfyUI input，再把返回文件名传给当前参数
+  - `media_filename`：直接传上游媒体文件名
+  - `media_url`：直接传上游媒体 URL
+
+执行失败时会返回失败步骤和已完成步骤结果，执行成功时返回所有步骤的结构化结果与最后一步输出。
 
 #### `upload_image(source, overwrite=true)`
 
