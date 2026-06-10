@@ -53,6 +53,10 @@ function createTemplateWidget() {
     listEl.style.cssText = "display:flex;flex-direction:column;gap:4px;";
     container.appendChild(listEl);
 
+    const actionInfoEl = document.createElement("div");
+    actionInfoEl.style.cssText = "font-size:12px;color:#888;min-height:18px;";
+    container.appendChild(actionInfoEl);
+
     const btnRow = document.createElement("div");
     btnRow.style.cssText = S.btnRow;
 
@@ -64,8 +68,21 @@ function createTemplateWidget() {
     createBtn.textContent = "Create from Workflow";
     createBtn.style.cssText = S.btn;
 
-    btnRow.append(refreshBtn, createBtn);
+    const autoCreateBtn = document.createElement("button");
+    autoCreateBtn.textContent = "Auto Extract Templates";
+    autoCreateBtn.style.cssText = S.btn;
+
+    const batchRefreshBtn = document.createElement("button");
+    batchRefreshBtn.textContent = "Batch Refresh Templates";
+    batchRefreshBtn.style.cssText = S.btn;
+
+    btnRow.append(refreshBtn, createBtn, autoCreateBtn, batchRefreshBtn);
     container.appendChild(btnRow);
+
+    function setActionInfo(text, isError = false) {
+        actionInfoEl.textContent = text;
+        actionInfoEl.style.color = isError ? "#f66" : "#888";
+    }
 
     async function loadTemplates() {
         listEl.innerHTML = "Loading...";
@@ -166,6 +183,42 @@ function createTemplateWidget() {
 
     refreshBtn.addEventListener("click", loadTemplates);
     createBtn.addEventListener("click", () => showCreateTemplateDialog(loadTemplates));
+    autoCreateBtn.addEventListener("click", async () => {
+        autoCreateBtn.disabled = true;
+        autoCreateBtn.textContent = "Working...";
+        setActionInfo("Scanning workflows and creating missing templates...");
+        try {
+            const result = await apiFetch("/templates/auto-create", { method: "POST" });
+            const created = result.created?.length || 0;
+            const skipped = result.skipped?.length || 0;
+            const failed = result.failed?.length || 0;
+            setActionInfo(`Auto extract complete: ${created} created, ${skipped} skipped, ${failed} failed.`, failed > 0);
+            await loadTemplates();
+        } catch (e) {
+            setActionInfo(`Auto extract failed: ${e.message}`, true);
+        } finally {
+            autoCreateBtn.disabled = false;
+            autoCreateBtn.textContent = "Auto Extract Templates";
+        }
+    });
+    batchRefreshBtn.addEventListener("click", async () => {
+        batchRefreshBtn.disabled = true;
+        batchRefreshBtn.textContent = "Working...";
+        setActionInfo("Refreshing all existing templates from workflows...");
+        try {
+            const result = await apiFetch("/templates/batch-refresh", { method: "POST" });
+            const refreshed = result.refreshed?.length || 0;
+            const skipped = result.skipped?.length || 0;
+            const failed = result.failed?.length || 0;
+            setActionInfo(`Batch refresh complete: ${refreshed} refreshed, ${skipped} skipped, ${failed} failed.`, failed > 0);
+            await loadTemplates();
+        } catch (e) {
+            setActionInfo(`Batch refresh failed: ${e.message}`, true);
+        } finally {
+            batchRefreshBtn.disabled = false;
+            batchRefreshBtn.textContent = "Batch Refresh Templates";
+        }
+    });
 
     loadTemplates();
     return container;

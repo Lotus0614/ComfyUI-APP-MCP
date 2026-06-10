@@ -102,6 +102,59 @@ async def create_template(request):
     return web.json_response(template)
 
 
+@PromptServer.instance.routes.post(f"{API_PREFIX}/templates/auto-create")
+async def auto_create_templates(request):
+    """Create templates for workflows that contain a title markdown node."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{COMFYUI_URL}/api/userdata",
+                params={"dir": "workflows", "recurse": "true", "split": "false", "full_info": "true"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            items = resp.json()
+    except Exception as e:
+        logger.error(f"[MCP] auto_create_templates: failed to list workflows: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+    created = []
+    skipped = []
+    failed = []
+
+    for item in items:
+        path = item.get("path", "") if isinstance(item, dict) else str(item)
+        if not path.endswith(".json"):
+            continue
+        name = path.removesuffix(".json")
+        if template_manager.get_template(name):
+            skipped.append({"name": name, "reason": "template exists"})
+            continue
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{COMFYUI_URL}/api/userdata/workflows%2F{name}.json",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                workflow = resp.json()
+            info = await template_manager.extract_template_info(workflow)
+            if not info.get("title"):
+                skipped.append({"name": name, "reason": "missing title markdown"})
+                continue
+            await template_manager.save_template(name, workflow)
+            created.append({"name": name, "title": info.get("title", "")})
+        except Exception as e:
+            logger.error(f"[MCP] auto_create_templates: failed for workflow '{name}': {e}")
+            failed.append({"name": name, "error": str(e)})
+
+    return web.json_response({
+        "created": created,
+        "skipped": skipped,
+        "failed": failed,
+    })
+
+
 @PromptServer.instance.routes.put(f"{API_PREFIX}/templates/{{name}}")
 async def update_template(request):
     """Update template metadata (outputs, description, inputs)."""
@@ -111,6 +164,52 @@ async def update_template(request):
     if not template:
         return web.json_response({"error": "Not found"}, status=404)
     return web.json_response(template)
+
+
+@PromptServer.instance.routes.post(f"{API_PREFIX}/templates/batch-refresh")
+async def batch_refresh_templates(request):
+    """Refresh all existing templates from current workflows."""
+    templates = template_manager.list_templates(include_disabled=True)
+    refreshed = []
+    skipped = []
+    failed = []
+
+    for template_info in templates:
+        name = template_info.get("name", "")
+        if not name:
+            continue
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{COMFYUI_URL}/api/userdata/workflows%2F{name}.json",
+                    timeout=10,
+                )
+                if resp.status_code == 404:
+                    skipped.append({"name": name, "reason": "workflow not found"})
+                    continue
+                resp.raise_for_status()
+                workflow = resp.json()
+            info = await template_manager.extract_template_info(workflow)
+            template = template_manager.update_template(name, {
+                "workflow": workflow,
+                "inputs": info.get("inputs", {}),
+                "outputs": info.get("outputs", {}),
+                "description": info.get("description", ""),
+                "title": info.get("title", ""),
+            })
+            if not template:
+                failed.append({"name": name, "error": "template not found"})
+                continue
+            refreshed.append({"name": name, "title": info.get("title", "")})
+        except Exception as e:
+            logger.error(f"[MCP] batch_refresh_templates: failed for template '{name}': {e}")
+            failed.append({"name": name, "error": str(e)})
+
+    return web.json_response({
+        "refreshed": refreshed,
+        "skipped": skipped,
+        "failed": failed,
+    })
 
 
 @PromptServer.instance.routes.delete(f"{API_PREFIX}/templates/{{name}}")
