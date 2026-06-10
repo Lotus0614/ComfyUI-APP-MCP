@@ -358,6 +358,161 @@ def read_template_doc(name: str, title: str) -> dict:
     }
 
 
+async def _upload_media_to_input(media_item: dict) -> dict:
+    """Download a generated media file from ComfyUI output storage and upload it to input."""
+    filename = media_item.get("filename", "") or "pipeline_input.png"
+    subfolder = media_item.get("subfolder", "")
+    item_type = media_item.get("item_type", "output")
+    media_url = (
+        f"{COMFYUI_URL}/view?"
+        f"filename={filename}"
+        f"&subfolder={subfolder}"
+        f"&type={item_type}"
+    )
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        resp = await client.get(media_url, timeout=60)
+        resp.raise_for_status()
+        image_bytes = resp.content
+
+        upload_resp = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": (filename or "pipeline_input.png", image_bytes)},
+            data={"overwrite": "true"},
+            timeout=60,
+        )
+        if upload_resp.status_code != 200:
+            try:
+                error_body = upload_resp.json()
+            except Exception:
+                error_body = upload_resp.text
+            raise RuntimeError(f"Upload failed ({upload_resp.status_code}): {error_body}")
+        return upload_resp.json()
+
+
+def _resolve_binding_value(step_results: dict, binding: dict):
+    """Resolve a pipeline binding against previously completed step results."""
+    from_step = binding.get("from")
+    output_name = binding.get("output")
+    binding_type = binding.get("type")
+    index = int(binding.get("index", 0))
+
+    if from_step not in step_results:
+        raise ValueError(f"Binding source step '{from_step}' not found")
+
+    outputs = step_results[from_step].get("outputs", {})
+    if output_name not in outputs:
+        raise ValueError(f"Output '{output_name}' not found in step '{from_step}'")
+
+    output_data = outputs[output_name]
+
+    if binding_type == "text":
+        texts = output_data.get("text", [])
+        if index >= len(texts):
+            raise ValueError(f"Text output index {index} out of range for '{output_name}' in step '{from_step}'")
+        return texts[index]
+
+    media = output_data.get("media", [])
+    if index >= len(media):
+        raise ValueError(f"Media output index {index} out of range for '{output_name}' in step '{from_step}'")
+
+    media_item = media[index]
+    if binding_type == "media_url":
+        return media_item.get("url", "")
+    if binding_type == "media_filename":
+        return media_item.get("filename", "")
+    if binding_type == "image":
+        if media_item.get("type") not in {"image", "gif"}:
+            raise ValueError(f"Binding '{output_name}' from step '{from_step}' is not an image output")
+        return media_item
+
+    raise ValueError(f"Unsupported binding type '{binding_type}'")
+
+
+async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
+    """Run multiple templates sequentially with explicit output-to-input bindings."""
+    steps = pipeline.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return {"error": "pipeline.steps must be a non-empty list"}
+
+    seen_ids = set()
+    step_results = {}
+    completed_steps = []
+
+    for raw_step in steps:
+        if not isinstance(raw_step, dict):
+            return {"error": "Each pipeline step must be an object", "steps": completed_steps}
+
+        step_id = str(raw_step.get("id", "")).strip()
+        template_name = str(raw_step.get("template", "")).strip()
+        params = raw_step.get("params", {})
+        bindings = raw_step.get("bindings", {})
+
+        if not step_id:
+            return {"error": "Each pipeline step requires a non-empty id", "steps": completed_steps}
+        if step_id in seen_ids:
+            return {"error": f"Duplicate pipeline step id '{step_id}'", "steps": completed_steps}
+        if not template_name:
+            return {"error": f"Pipeline step '{step_id}' requires a template name", "steps": completed_steps}
+        if not isinstance(params, dict):
+            return {"error": f"Pipeline step '{step_id}' params must be an object", "steps": completed_steps}
+        if not isinstance(bindings, dict):
+            return {"error": f"Pipeline step '{step_id}' bindings must be an object", "steps": completed_steps}
+
+        seen_ids.add(step_id)
+
+        resolved_params = dict(params)
+        try:
+            for param_name, binding in bindings.items():
+                if not isinstance(binding, dict):
+                    raise ValueError(f"Binding for param '{param_name}' in step '{step_id}' must be an object")
+                resolved_value = _resolve_binding_value(step_results, binding)
+                if binding.get("type") == "image":
+                    upload_result = await _upload_media_to_input(resolved_value)
+                    resolved_params[param_name] = upload_result.get("name", "")
+                else:
+                    resolved_params[param_name] = resolved_value
+        except Exception as e:
+            return {
+                "status": "failed",
+                "failed_step": step_id,
+                "error": str(e),
+                "steps": completed_steps,
+            }
+
+        result = await execute_template(template_name, resolved_params, wait=True, timeout=timeout_per_step)
+        step_record = {
+            "id": step_id,
+            "template": template_name,
+            "params": resolved_params,
+            "status": result.get("status", "failed" if result.get("error") else "completed"),
+        }
+        if "prompt_id" in result:
+            step_record["prompt_id"] = result["prompt_id"]
+        if "outputs" in result:
+            step_record["outputs"] = result["outputs"]
+        if result.get("error"):
+            step_record["error"] = result["error"]
+            if "details" in result:
+                step_record["details"] = result["details"]
+            completed_steps.append(step_record)
+            return {
+                "status": "failed",
+                "failed_step": step_id,
+                "error": result["error"],
+                "steps": completed_steps,
+            }
+
+        step_results[step_id] = result
+        completed_steps.append(step_record)
+
+    final_step = completed_steps[-1] if completed_steps else {}
+    return {
+        "status": "completed",
+        "steps": completed_steps,
+        "final": final_step.get("outputs", {}),
+    }
+
+
 async def save_template(name: str, workflow: dict, outputs: dict | None = None) -> dict:
     _ensure_dir()
     info = await extract_template_info(workflow)
@@ -734,6 +889,17 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
             for nid, node_info in prompt_nodes.items():
                 node_names[str(nid)] = node_info.get("class_type", f"node_{nid}")
 
+    output_meta_by_node_id = {}
+    for output_name, output_meta in outputs.items():
+        node_id = output_meta.get("node_id")
+        if node_id is None:
+            continue
+        output_meta_by_node_id[str(node_id)] = {
+            "output_name": output_name,
+            "title": output_meta.get("title", ""),
+            "node_id": node_id,
+        }
+
     # If outputs are configured, only include those nodes
     if outputs:
         target_node_ids = {str(v.get("node_id")) for v in outputs.values()}
@@ -746,8 +912,10 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
             continue
         if node_id not in target_node_ids:
             continue
-        name = node_names.get(node_id, f"node_{node_id}")
+        output_meta = output_meta_by_node_id.get(node_id, {})
+        name = output_meta.get("output_name") or node_names.get(node_id, f"node_{node_id}")
         node_result = dict(node_output)
+        node_title = output_meta.get("title") or node_names.get(node_id, f"node_{node_id}")
 
         # Build view_urls for media entries (images, audio, gifs, etc.)
         media_urls = []
@@ -765,7 +933,16 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                        f"filename={filename}"
                        f"&subfolder={subfolder}"
                        f"&type={item_type}")
-                media_urls.append({"url": url, "type": media_type, "filename": filename})
+                media_urls.append({
+                    "output_name": name,
+                    "node_id": output_meta.get("node_id", node_id),
+                    "title": node_title,
+                    "url": url,
+                    "type": media_type,
+                    "filename": filename,
+                    "subfolder": subfolder,
+                    "item_type": item_type,
+                })
         if media_urls:
             node_result["media"] = media_urls
 

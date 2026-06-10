@@ -33,19 +33,26 @@ def _format_template_result(result: dict) -> str:
     outputs = result.get("outputs", {})
 
     # Collect media and text outputs
-    all_media = []  # [{"url": ..., "type": ..., "filename": ...}]
+    all_media = []
     text_outputs = {}
-    for node_name, node_data in outputs.items():
+    for output_name, node_data in outputs.items():
         # New format: media list
         media = node_data.get("media", [])
         if media:
             all_media.extend(media)
         # Legacy format: view_urls (image-only)
         for url in node_data.get("view_urls", []):
-            all_media.append({"url": url, "type": "image", "filename": ""})
+            all_media.append({
+                "output_name": output_name,
+                "node_id": node_data.get("node_id"),
+                "title": node_data.get("title", output_name),
+                "url": url,
+                "type": "image",
+                "filename": "",
+            })
         texts = node_data.get("text", [])
         if texts:
-            text_outputs[node_name] = texts[0] if len(texts) == 1 else texts
+            text_outputs[output_name] = texts[0] if len(texts) == 1 else texts
 
     # Build response
     lines = []
@@ -57,15 +64,18 @@ def _format_template_result(result: dict) -> str:
     if all_media:
         lines.append("")
         for item in all_media:
+            output_name = item.get("output_name", "output")
             mtype = item.get("type", "image")
             url = item["url"]
             fname = item.get("filename", "")
             if mtype == "image" or mtype == "gif":
-                lines.append(f"![{mtype}]({url})")
+                lines.append(f"**{output_name}**: ![{mtype}]({url})")
             elif mtype == "audio":
-                lines.append(f"🔊 **Audio**: [{fname}]({url})")
+                label = fname or mtype
+                lines.append(f"**{output_name}**: 🔊 [{label}]({url})")
             else:
-                lines.append(f"📎 **{mtype}**: [{fname}]({url})")
+                label = fname or mtype
+                lines.append(f"**{output_name}**: 📎 {mtype}: [{label}]({url})")
 
     if lines:
         return "\n".join(lines)
@@ -272,6 +282,29 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def run_templates(pipeline: str, timeout_per_step: float = 300) -> str:
+        """Run multiple templates sequentially with explicit output-to-input bindings.
+
+        Args:
+            pipeline: JSON string describing the template pipeline.
+            timeout_per_step: Max seconds to wait for each step.
+        """
+        logger.info(f"[MCP] run_templates(timeout_per_step={timeout_per_step})")
+        try:
+            pipeline_data = json.loads(pipeline)
+        except json.JSONDecodeError as e:
+            logger.error(f"[MCP] run_templates → invalid JSON: {e}")
+            return json.dumps({"error": f"Invalid pipeline JSON: {e}"}, ensure_ascii=False)
+
+        try:
+            result = await template_manager.run_templates(pipeline_data, timeout_per_step=timeout_per_step)
+            logger.info(f"[MCP] run_templates → {result.get('status', 'unknown')}")
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"[MCP] run_templates error: {e}")
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @mcp.tool()
     async def get_template_result(name: str, prompt_id: str) -> str:
         """Poll for template execution result. Call repeatedly until status is 'completed'.
 
@@ -339,7 +372,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"
             "   - By default, the call waits for completion and returns results directly.\n"
             "   - Set `wait=false` to return immediately with a `prompt_id` for later polling.\n"
-            "4. Results include:\n"
+            "5. Call `run_templates('{\"steps\": [...]}')` to chain multiple templates together.\n"
+            "   - Use `bindings` to map a previous step output into a later step input.\n"
+            "   - Use binding type `text` for text outputs and `image` for image reuse.\n"
+            "6. Results include:\n"
             "   - **Text outputs** from nodes like ShowText.\n"
             "   - **Image URLs** in markdown format `![image](url)` — click to view in browser.\n"
             "   - Image view URLs follow the format: `http://<comfyui>/view?filename=<name>&subfolder=<path>&type=output`.\n\n"
