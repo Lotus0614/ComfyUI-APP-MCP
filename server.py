@@ -132,6 +132,28 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
+    async def read_template_doc(name: str, title: str) -> str:
+        """Read a named documentation section from a template.
+
+        Use this for progressive disclosure: keep get_template concise, then fetch
+        extra sections such as "usage", "examples", "tips", or "negative_prompt"
+        only when needed.
+
+        Args:
+            name: Template name.
+            title: Documentation section title to read.
+        """
+        logger.info(f"[MCP] read_template_doc(name={name!r}, title={title!r})")
+        try:
+            result = template_manager.read_template_doc(name, title)
+            if result.get("error"):
+                logger.warning(f"[MCP] read_template_doc → {result['error']}")
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"[MCP] read_template_doc error: {e}")
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @mcp.tool()
     async def upload_image(source: str, overwrite: bool = True) -> str:
         """Upload an image to ComfyUI. Supports local file path, HTTP URL, or base64 data.
 
@@ -305,13 +327,15 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "### Relationship to Workflows\n"
             "- A ComfyUI **workflow** is a node graph (e.g., txt2img, img2img, ControlNet) saved in the ComfyUI editor.\n"
             "- A **template** is a workflow packaged with auto-detected inputs (labeled widget fields) and outputs (terminal nodes).\n"
-            "- Templates are stored as JSON files in the `mcp-server/templates/` directory.\n\n"
+            "- Templates are stored as JSON files in the `mcp-server/templates/` directory.\n"
+            "- Extra template docs can be fetched on demand with `read_template_doc(name, title)` for progressive disclosure.\n\n"
             "### How to Use\n"
             "1. Call `list_templates()` to see all available templates with their names and descriptions.\n"
             "2. Call `get_template('<name>')` to see the template's inputs (parameters you can set) and outputs.\n"
             "   - Inputs have names (e.g., '提示词', '模型名称'), types, and which node/widget they control.\n"
             "   - Outputs are auto-detected from terminal nodes (nodes whose outputs are not connected to other nodes).\n"
-            "3. Call `run_template('<name>', '{\"param\": \"value\"}')` to execute with your parameters.\n"
+            "3. If you need extra docs, call `read_template_doc('<name>', '<title>')` for a specific documentation section.\n"
+            "4. Call `run_template('<name>', '{\"param\": \"value\"}')` to execute with your parameters.\n"
             "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"
             "   - By default, the call waits for completion and returns results directly.\n"
             "   - Set `wait=false` to return immediately with a `prompt_id` for later polling.\n"
