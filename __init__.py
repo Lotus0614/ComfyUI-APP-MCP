@@ -14,20 +14,19 @@ Environment variables:
 
 import asyncio
 import logging
-import os
 
 from comfy_api.latest import ComfyExtension, io
 
 from .server import create_mcp_server
 from . import routes  # noqa: F401 — register aiohttp routes on import
-from . import template_manager
+from . import config, template_manager
 
 logger = logging.getLogger(__name__)
 
 WEB_DIRECTORY = "./js"
 
-MCP_PORT = int(os.environ.get("MCP_PORT", "8189"))
-MCP_HOST = os.environ.get("MCP_HOST", "0.0.0.0")
+MCP_PORT = config.get_mcp_port()
+MCP_HOST = config.get_mcp_host()
 
 
 async def _run_mcp_background():
