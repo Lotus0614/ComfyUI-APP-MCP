@@ -13,8 +13,10 @@ logger = logging.getLogger(__name__)
 
 try:
     from . import config
+    from .comfyui_client import ComfyUIClient
 except ImportError:
     import config
+    from comfyui_client import ComfyUIClient
 
 # Set by middleware from MCP request query param or comfyui_url header.
 # Used for media links returned to remote MCP clients.
@@ -35,19 +37,19 @@ _UI_ONLY_TYPES = {
 _node_defs_cache: dict | None = None
 
 
+def _comfyui_client() -> ComfyUIClient:
+    return ComfyUIClient(
+        base_url=config.get_comfyui_api_url(),
+        headers=config.get_comfyui_headers(),
+    )
+
+
 async def _get_node_definitions() -> dict:
     """Fetch and cache node definitions from ComfyUI /object_info."""
     global _node_defs_cache
     if _node_defs_cache is not None:
         return _node_defs_cache
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{config.get_comfyui_api_url()}/object_info",
-            headers=config.get_comfyui_headers(),
-            timeout=15,
-        )
-        resp.raise_for_status()
-        _node_defs_cache = resp.json()
+    _node_defs_cache = await _comfyui_client().list_nodes()
     return _node_defs_cache
 
 
@@ -366,10 +368,7 @@ def read_template_doc(name: str, title: str) -> dict:
     }
 
 async def _fetch_history_entry(prompt_id: str) -> dict | None:
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
-        resp.raise_for_status()
-        history = resp.json()
+    history = await _comfyui_client().get_history(prompt_id)
     return history.get(prompt_id)
 
 
@@ -378,30 +377,9 @@ async def _upload_media_to_input(media_item: dict) -> dict:
     filename = media_item.get("filename", "") or "pipeline_input.png"
     subfolder = media_item.get("subfolder", "")
     item_type = media_item.get("item_type", "output")
-    media_url = (
-        f"{COMFYUI_URL}/view?"
-        f"filename={filename}"
-        f"&subfolder={subfolder}"
-        f"&type={item_type}"
-    )
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        resp = await client.get(media_url, timeout=60)
-        resp.raise_for_status()
-        image_bytes = resp.content
-
-        upload_resp = await client.post(
-            f"{COMFYUI_URL}/upload/image",
-            files={"image": (filename or "pipeline_input.png", image_bytes)},
-            data={"overwrite": "true"},
-            timeout=60,
-        )
-        if upload_resp.status_code != 200:
-            try:
-                error_body = upload_resp.json()
-            except Exception:
-                error_body = upload_resp.text
-            raise RuntimeError(f"Upload failed ({upload_resp.status_code}): {error_body}")
-        return upload_resp.json()
+    client = _comfyui_client()
+    image_bytes = await client.download_view(filename, subfolder=subfolder, file_type=item_type)
+    return await client.upload_image_bytes(filename or "pipeline_input.png", image_bytes, overwrite=True)
 
 
 async def _resolve_binding_value(result_sources: dict, binding: dict):
@@ -935,48 +913,39 @@ async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dic
     interval = 1.0  # poll interval in seconds
     elapsed = 0.0
     checked_queue = False
-    async with httpx.AsyncClient() as client:
-        while elapsed < timeout:
-            try:
-                resp = await client.get(
-                    f"{config.get_comfyui_api_url()}/history/{prompt_id}",
-                    headers=config.get_comfyui_headers(),
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                history = resp.json()
-                if prompt_id in history:
-                    entry = history[prompt_id]
-                    status = entry.get("status", {})
-                    if status.get("completed", False):
-                        return _extract_outputs(entry, outputs, prompt_id)
-                    if status.get("status_str") == "error":
-                        return {"error": "Execution failed", "prompt_id": prompt_id,
-                                "details": status.get("messages", [])}
-                elif elapsed >= 3.0 and not checked_queue:
-                    # After 3s, check if the prompt is in the queue
-                    # If not in queue AND not in history, the prompt_id is likely invalid
-                    checked_queue = True
-                    try:
-                        queue_resp = await client.get(f"{COMFYUI_URL}/queue", timeout=10)
-                        queue_resp.raise_for_status()
-                        queue_data = queue_resp.json()
-                        queue_ids = set()
-                        for item in queue_data.get("queue_pending", []):
-                            if isinstance(item, list) and len(item) >= 2:
-                                queue_ids.add(item[1])
-                        for item in queue_data.get("queue_running", []):
-                            if isinstance(item, list) and len(item) >= 2:
-                                queue_ids.add(item[1])
-                        if prompt_id not in queue_ids:
-                            return {"error": f"Prompt '{prompt_id}' not found in queue or history",
-                                    "prompt_id": prompt_id}
-                    except Exception:
-                        pass  # Queue check failed, continue polling
-            except Exception as e:
-                logger.warning(f"Poll error: {e}")
-            await asyncio.sleep(interval)
-            elapsed += interval
+    client = _comfyui_client()
+    while elapsed < timeout:
+        try:
+            history = await client.get_history(prompt_id)
+            if prompt_id in history:
+                entry = history[prompt_id]
+                status = entry.get("status", {})
+                if status.get("completed", False):
+                    return _extract_outputs(entry, outputs, prompt_id)
+                if status.get("status_str") == "error":
+                    return {"error": "Execution failed", "prompt_id": prompt_id,
+                            "details": status.get("messages", [])}
+            elif elapsed >= 3.0 and not checked_queue:
+                # After 3s, check if the prompt is in the queue.
+                checked_queue = True
+                try:
+                    queue_data = await client.get_queue()
+                    queue_ids = set()
+                    for item in queue_data.get("queue_pending", []):
+                        if isinstance(item, list) and len(item) >= 2:
+                            queue_ids.add(item[1])
+                    for item in queue_data.get("queue_running", []):
+                        if isinstance(item, list) and len(item) >= 2:
+                            queue_ids.add(item[1])
+                    if prompt_id not in queue_ids:
+                        return {"error": f"Prompt '{prompt_id}' not found in queue or history",
+                                "prompt_id": prompt_id}
+                except Exception:
+                    pass  # Queue check failed, continue polling.
+        except Exception as e:
+            logger.warning(f"Poll error: {e}")
+        await asyncio.sleep(interval)
+        elapsed += interval
     return {"error": f"Timed out after {timeout}s", "prompt_id": prompt_id}
 
 
@@ -1110,21 +1079,15 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
     api_prompt = _ui_workflow_to_api_prompt(workflow, node_defs)
 
     # Submit to ComfyUI
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{config.get_comfyui_api_url()}/prompt",
-            headers=config.get_comfyui_headers(),
-            json={"prompt": api_prompt},
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            try:
-                error_body = resp.json()
-            except Exception:
-                error_body = resp.text
-            logger.error(f"[Template] ComfyUI rejected prompt ({resp.status_code}): {error_body}")
-            return {"error": f"ComfyUI error ({resp.status_code})", "details": error_body}
-        result = resp.json()
+    try:
+        result = await _comfyui_client().queue_prompt(api_prompt)
+    except httpx.HTTPStatusError as e:
+        try:
+            error_body = e.response.json()
+        except Exception:
+            error_body = e.response.text
+        logger.error(f"[Template] ComfyUI rejected prompt ({e.response.status_code}): {error_body}")
+        return {"error": f"ComfyUI error ({e.response.status_code})", "details": error_body}
 
     prompt_id = result.get("prompt_id")
     if not prompt_id:
@@ -1155,14 +1118,7 @@ async def get_template_outputs(prompt_id: str, outputs: dict, wait: bool = False
     if wait:
         return await _wait_for_result(prompt_id, outputs, timeout)
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{config.get_comfyui_api_url()}/history/{prompt_id}",
-            headers=config.get_comfyui_headers(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        history = resp.json()
+    history = await _comfyui_client().get_history(prompt_id)
 
     if prompt_id not in history:
         return {"status": "pending", "prompt_id": prompt_id}

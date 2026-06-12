@@ -1,4 +1,4 @@
-"""ComfyUI API client — wraps localhost HTTP endpoints."""
+"""ComfyUI API client — wraps HTTP endpoints used by the MCP server."""
 
 import httpx
 
@@ -10,15 +10,25 @@ class ComfyUIClient:
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
 
-    async def _get(self, path: str) -> dict:
+    async def _get(self, path: str, *, params: dict | None = None, timeout: float = 10) -> dict:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}{path}", headers=self.headers, timeout=10)
+            resp = await client.get(
+                f"{self.base_url}{path}",
+                params=params,
+                headers=self.headers,
+                timeout=timeout,
+            )
             resp.raise_for_status()
             return resp.json()
 
-    async def _post(self, path: str, json: dict | None = None) -> dict:
+    async def _post(self, path: str, json: dict | None = None, *, timeout: float = 30) -> dict:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}{path}", headers=self.headers, json=json, timeout=30)
+            resp = await client.post(
+                f"{self.base_url}{path}",
+                headers=self.headers,
+                json=json,
+                timeout=timeout,
+            )
             resp.raise_for_status()
             return resp.json()
 
@@ -54,6 +64,53 @@ class ComfyUIClient:
     async def interrupt(self) -> None:
         async with httpx.AsyncClient() as client:
             await client.post(f"{self.base_url}/interrupt", headers=self.headers, timeout=10)
+
+    # ── User data / workflows ──────────────────────────────
+
+    async def list_user_data(self, directory: str, recurse: bool = True, full_info: bool = True) -> list:
+        return await self._get(
+            "/api/userdata",
+            params={
+                "dir": directory,
+                "recurse": str(recurse).lower(),
+                "split": "false",
+                "full_info": str(full_info).lower(),
+            },
+            timeout=10,
+        )
+
+    async def get_workflow(self, name: str) -> dict:
+        return await self._get(f"/api/userdata/workflows%2F{name}.json", timeout=10)
+
+    # ── Files ───────────────────────────────────────────────
+
+    async def download_view(self, filename: str, subfolder: str = "", file_type: str = "output") -> bytes:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(
+                f"{self.base_url}/view",
+                params={"filename": filename, "subfolder": subfolder, "type": file_type},
+                headers=self.headers,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            return resp.content
+
+    async def upload_image_bytes(self, filename: str, image_bytes: bytes, overwrite: bool = True) -> dict:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self.base_url}/upload/image",
+                headers=self.headers,
+                files={"image": (filename, image_bytes)},
+                data={"overwrite": str(overwrite).lower()},
+                timeout=60,
+            )
+            if resp.status_code != 200:
+                try:
+                    details = resp.json()
+                except Exception:
+                    details = resp.text
+                raise RuntimeError(f"Upload failed ({resp.status_code}): {details}")
+            return resp.json()
 
     # ── System ──────────────────────────────────────────────
 
