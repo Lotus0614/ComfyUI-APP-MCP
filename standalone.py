@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
+from pathlib import Path
+
+# Ensure the package directory is in sys.path for standalone execution
+_pkg_dir = str(Path(__file__).resolve().parent)
+if _pkg_dir not in sys.path:
+    sys.path.insert(0, _pkg_dir)
 
 try:
     from . import config

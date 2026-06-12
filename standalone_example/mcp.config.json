@@ -1,0 +1,14 @@
+{
+    "comfyui": {
+        "apiUrl": "http://localhost:8188",
+        "headers": {}
+    },
+    "mcp": {
+        "host": "0.0.0.0",
+        "port": 8190,
+        "mediaProxy": true
+    },
+    "templates": {
+        "dir": "./templates"
+    }
+}
