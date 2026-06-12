@@ -85,6 +85,16 @@ def get_comfyui_public_url() -> str:
     return str(url or get_comfyui_api_url()).rstrip("/")
 
 
+def use_mcp_media_proxy() -> bool:
+    """Whether media links returned by direct MCP access should point to MCP /view."""
+    value = os.environ.get("MCP_MEDIA_PROXY")
+    if value is None:
+        value = _section("mcp").get("mediaProxy", True)
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() not in {"0", "false", "no", "off"}
+
+
 def get_comfyui_headers() -> dict[str, str]:
     """Optional headers for ComfyUI API calls."""
     headers = _section("comfyui").get("headers", {})
