@@ -4,17 +4,17 @@ import asyncio
 import copy
 import json
 import logging
-import os
 import random
 import contextvars
-from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
-TEMPLATE_DIR = Path(__file__).parent / "templates"
+try:
+    from . import config
+except ImportError:
+    import config
 
 # Set by middleware from MCP request query param or comfyui_url header.
 # Used for media links returned to remote MCP clients.
@@ -41,14 +41,18 @@ async def _get_node_definitions() -> dict:
     if _node_defs_cache is not None:
         return _node_defs_cache
     async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{COMFYUI_URL}/object_info", timeout=15)
+        resp = await client.get(
+            f"{config.get_comfyui_api_url()}/object_info",
+            headers=config.get_comfyui_headers(),
+            timeout=15,
+        )
         resp.raise_for_status()
         _node_defs_cache = resp.json()
     return _node_defs_cache
 
 
 def _ensure_dir():
-    TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
+    config.get_template_dir().mkdir(parents=True, exist_ok=True)
 
 
 # ── Auto-extract from workflow ────────────────────────────
@@ -315,7 +319,7 @@ def is_template_disabled(template: dict) -> bool:
 def list_templates(include_disabled: bool = False) -> list[dict]:
     _ensure_dir()
     templates = []
-    for f in sorted(TEMPLATE_DIR.glob("*.json")):
+    for f in sorted(config.get_template_dir().glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             disabled = is_template_disabled(data)
@@ -337,7 +341,7 @@ def list_templates(include_disabled: bool = False) -> list[dict]:
 
 
 def get_template(name: str) -> dict | None:
-    path = TEMPLATE_DIR / f"{name}.json"
+    path = config.get_template_dir() / f"{name}.json"
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
@@ -604,7 +608,7 @@ async def save_template(name: str, workflow: dict, outputs: dict | None = None) 
         "inputs": info["inputs"],
         "outputs": outputs or info["outputs"],
     }
-    path = TEMPLATE_DIR / f"{name}.json"
+    path = config.get_template_dir() / f"{name}.json"
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
     return template
 
@@ -625,13 +629,13 @@ def update_template(name: str, updates: dict) -> dict | None:
         template["inputs"] = updates["inputs"]
     if "disabled" in updates:
         template["disabled"] = bool(updates["disabled"])
-    path = TEMPLATE_DIR / f"{name}.json"
+    path = config.get_template_dir() / f"{name}.json"
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
     return template
 
 
 def delete_template(name: str) -> bool:
-    path = TEMPLATE_DIR / f"{name}.json"
+    path = config.get_template_dir() / f"{name}.json"
     if path.exists():
         path.unlink()
         return True
@@ -934,7 +938,11 @@ async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dic
     async with httpx.AsyncClient() as client:
         while elapsed < timeout:
             try:
-                resp = await client.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+                resp = await client.get(
+                    f"{config.get_comfyui_api_url()}/history/{prompt_id}",
+                    headers=config.get_comfyui_headers(),
+                    timeout=10,
+                )
                 resp.raise_for_status()
                 history = resp.json()
                 if prompt_id in history:
@@ -1027,7 +1035,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                 subfolder = item.get("subfolder", "")
                 item_type = item.get("type", "output")
                 media_type = item.get("mediaType", media_key.rstrip("s"))  # "image", "audio", "gif"
-                base_url = _comfyui_public_url.get() or COMFYUI_URL
+                base_url = _comfyui_public_url.get() or config.get_comfyui_public_url()
                 url = (f"{base_url}/view?"
                        f"filename={filename}"
                        f"&subfolder={subfolder}"
@@ -1104,7 +1112,8 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
     # Submit to ComfyUI
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{COMFYUI_URL}/prompt",
+            f"{config.get_comfyui_api_url()}/prompt",
+            headers=config.get_comfyui_headers(),
             json={"prompt": api_prompt},
             timeout=30,
         )
@@ -1147,7 +1156,11 @@ async def get_template_outputs(prompt_id: str, outputs: dict, wait: bool = False
         return await _wait_for_result(prompt_id, outputs, timeout)
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=10)
+        resp = await client.get(
+            f"{config.get_comfyui_api_url()}/history/{prompt_id}",
+            headers=config.get_comfyui_headers(),
+            timeout=10,
+        )
         resp.raise_for_status()
         history = resp.json()
 

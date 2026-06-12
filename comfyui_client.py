@@ -6,18 +6,19 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8188"
 
 
 class ComfyUIClient:
-    def __init__(self, base_url: str = DEFAULT_BASE_URL):
+    def __init__(self, base_url: str = DEFAULT_BASE_URL, headers: dict[str, str] | None = None):
         self.base_url = base_url.rstrip("/")
+        self.headers = headers or {}
 
     async def _get(self, path: str) -> dict:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}{path}", timeout=10)
+            resp = await client.get(f"{self.base_url}{path}", headers=self.headers, timeout=10)
             resp.raise_for_status()
             return resp.json()
 
     async def _post(self, path: str, json: dict | None = None) -> dict:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}{path}", json=json, timeout=30)
+            resp = await client.post(f"{self.base_url}{path}", headers=self.headers, json=json, timeout=30)
             resp.raise_for_status()
             return resp.json()
 
@@ -52,7 +53,7 @@ class ComfyUIClient:
 
     async def interrupt(self) -> None:
         async with httpx.AsyncClient() as client:
-            await client.post(f"{self.base_url}/interrupt", timeout=10)
+            await client.post(f"{self.base_url}/interrupt", headers=self.headers, timeout=10)
 
     # ── System ──────────────────────────────────────────────
 

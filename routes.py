@@ -2,19 +2,17 @@
 
 import json
 import logging
-import os
+import zipfile
+from io import BytesIO
 import httpx
 from aiohttp import web
 from server import PromptServer
 
-from . import template_manager
+from . import config, template_manager
 
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/mcp-server/api"
-
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
-MCP_INTERNAL_URL = f"http://127.0.0.1:{os.environ.get('MCP_PORT', '8189')}"
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/status")
@@ -31,8 +29,9 @@ async def list_workflows(request):
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{COMFYUI_URL}/api/userdata",
+                f"{config.get_comfyui_api_url()}/api/userdata",
                 params={"dir": "workflows", "recurse": "true", "split": "false", "full_info": "true"},
+                headers=config.get_comfyui_headers(),
                 timeout=10,
             )
             resp.raise_for_status()
@@ -57,7 +56,8 @@ async def get_workflow_content(request):
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{COMFYUI_URL}/api/userdata/workflows%2F{name}.json",
+                f"{config.get_comfyui_api_url()}/api/userdata/workflows%2F{name}.json",
+                headers=config.get_comfyui_headers(),
                 timeout=10,
             )
             resp.raise_for_status()
@@ -74,6 +74,27 @@ async def list_templates(request):
     """List all templates."""
     include_disabled = request.query.get("include_disabled") in {"1", "true", "yes"}
     return web.json_response({"templates": template_manager.list_templates(include_disabled=include_disabled)})
+
+
+@PromptServer.instance.routes.get(f"{API_PREFIX}/templates/export")
+async def export_templates(request):
+    """Export current template JSON files as a standalone templates zip."""
+    template_dir = config.get_template_dir()
+    buffer = BytesIO()
+    count = 0
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(template_dir.glob("*.json")):
+            zf.write(path, arcname=f"templates/{path.name}")
+            count += 1
+
+    if count == 0:
+        return web.json_response({"error": "No templates to export"}, status=404)
+
+    return web.Response(
+        body=buffer.getvalue(),
+        content_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="mcp-templates.zip"'},
+    )
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/templates/{{name}}")
@@ -305,7 +326,7 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
 
 
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
-    target = f"{MCP_INTERNAL_URL}/mcp"
+    target = f"http://127.0.0.1:{config.get_mcp_port()}/mcp"
     if request.query_string:
         target += f"?{request.query_string}"
 
