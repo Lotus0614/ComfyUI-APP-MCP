@@ -33,6 +33,21 @@ async function apiFetch(path, options = {}) {
     }
 }
 
+async function downloadFile(path, filename) {
+    const resp = await fetch(`${API}${path}`);
+    const text = resp.ok ? null : await resp.text();
+    if (!resp.ok) throw new Error(`API error (${resp.status}): ${text}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
 // ── Styles ────────────────────────────────────────────────
 
 const S = {
@@ -64,7 +79,11 @@ function createTemplateWidget() {
     createBtn.textContent = "Create from Workflow";
     createBtn.style.cssText = S.btn;
 
-    btnRow.append(refreshBtn, createBtn);
+    const exportBtn = document.createElement("button");
+    exportBtn.textContent = "Export Templates";
+    exportBtn.style.cssText = S.btn;
+
+    btnRow.append(refreshBtn, createBtn, exportBtn);
     container.appendChild(btnRow);
 
     async function loadTemplates() {
@@ -147,6 +166,18 @@ function createTemplateWidget() {
 
     refreshBtn.addEventListener("click", loadTemplates);
     createBtn.addEventListener("click", () => showCreateTemplateDialog(loadTemplates));
+    exportBtn.addEventListener("click", async () => {
+        exportBtn.textContent = "Exporting...";
+        exportBtn.disabled = true;
+        try {
+            await downloadFile("/templates/export", "mcp-templates.zip");
+        } catch (e) {
+            alert(`Export failed: ${e.message}`);
+        } finally {
+            exportBtn.textContent = "Export Templates";
+            exportBtn.disabled = false;
+        }
+    });
 
     loadTemplates();
     return container;

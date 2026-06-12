@@ -2,7 +2,6 @@
 
 import base64
 import json
-import os
 import logging
 from pathlib import Path
 
@@ -11,12 +10,15 @@ from mcp.server.fastmcp import FastMCP
 
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .comfyui_client import ComfyUIClient
-from . import template_manager
+try:
+    from .comfyui_client import ComfyUIClient
+    from . import config, template_manager
+except ImportError:
+    from comfyui_client import ComfyUIClient
+    import config
+    import template_manager
 
 logger = logging.getLogger(__name__)
-
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
 
 # Disable DNS rebinding protection so LAN clients can connect.
 # Security is handled by ComfyUI's own --listen flag instead.
@@ -77,7 +79,10 @@ def _format_template_result(result: dict) -> str:
 def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
     """Create and configure the MCP server instance."""
     if client is None:
-        client = ComfyUIClient(base_url=COMFYUI_URL)
+        client = ComfyUIClient(
+            base_url=config.get_comfyui_api_url(),
+            headers=config.get_comfyui_headers(),
+        )
 
     mcp = FastMCP(
         name="ComfyUI MCP Server",
@@ -187,7 +192,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         """Upload image bytes to ComfyUI /upload/image endpoint."""
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{COMFYUI_URL}/upload/image",
+                f"{config.get_comfyui_api_url()}/upload/image",
+                headers=config.get_comfyui_headers(),
                 files={"image": (filename, image_bytes)},
                 data={"overwrite": str(overwrite).lower()},
                 timeout=30,
