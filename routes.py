@@ -8,11 +8,19 @@ import httpx
 from aiohttp import web
 from server import PromptServer
 
+from .comfyui_client import ComfyUIClient
 from . import config, template_manager
 
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/mcp-server/api"
+
+
+def _comfyui_client() -> ComfyUIClient:
+    return ComfyUIClient(
+        base_url=config.get_comfyui_api_url(),
+        headers=config.get_comfyui_headers(),
+    )
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/status")
@@ -27,23 +35,15 @@ async def mcp_status(request):
 async def list_workflows(request):
     """List all ComfyUI workflows for template creation."""
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{config.get_comfyui_api_url()}/api/userdata",
-                params={"dir": "workflows", "recurse": "true", "split": "false", "full_info": "true"},
-                headers=config.get_comfyui_headers(),
-                timeout=10,
-            )
-            resp.raise_for_status()
-            items = resp.json()
-            workflows = []
-            for item in items:
-                if isinstance(item, dict):
-                    path = item.get("path", "")
-                else:
-                    path = str(item)
-                workflows.append({"name": path.removesuffix(".json"), "path": path})
-            return web.json_response({"workflows": workflows})
+        items = await _comfyui_client().list_user_data("workflows")
+        workflows = []
+        for item in items:
+            if isinstance(item, dict):
+                path = item.get("path", "")
+            else:
+                path = str(item)
+            workflows.append({"name": path.removesuffix(".json"), "path": path})
+        return web.json_response({"workflows": workflows})
     except Exception as e:
         logger.error(f"Failed to fetch workflows from ComfyUI: {e}")
         return web.json_response({"workflows": [], "error": str(e)})
@@ -54,14 +54,7 @@ async def get_workflow_content(request):
     """Get a specific workflow's content from ComfyUI."""
     name = request.match_info["name"]
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{config.get_comfyui_api_url()}/api/userdata/workflows%2F{name}.json",
-                headers=config.get_comfyui_headers(),
-                timeout=10,
-            )
-            resp.raise_for_status()
-            return web.json_response(resp.json())
+        return web.json_response(await _comfyui_client().get_workflow(name))
     except Exception as e:
         logger.error(f"[MCP] Failed to fetch workflow '{name}': {e}")
         return web.json_response({"error": str(e)}, status=404)
@@ -127,14 +120,8 @@ async def create_template(request):
 async def auto_create_templates(request):
     """Create templates for workflows that contain a title markdown node."""
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{COMFYUI_URL}/api/userdata",
-                params={"dir": "workflows", "recurse": "true", "split": "false", "full_info": "true"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            items = resp.json()
+        client = _comfyui_client()
+        items = await client.list_user_data("workflows")
     except Exception as e:
         logger.error(f"[MCP] auto_create_templates: failed to list workflows: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -152,13 +139,7 @@ async def auto_create_templates(request):
             skipped.append({"name": name, "reason": "template exists"})
             continue
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{COMFYUI_URL}/api/userdata/workflows%2F{name}.json",
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                workflow = resp.json()
+            workflow = await client.get_workflow(name)
             info = await template_manager.extract_template_info(workflow)
             if not info.get("title"):
                 skipped.append({"name": name, "reason": "missing title markdown"})
@@ -200,16 +181,13 @@ async def batch_refresh_templates(request):
         if not name:
             continue
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{COMFYUI_URL}/api/userdata/workflows%2F{name}.json",
-                    timeout=10,
-                )
-                if resp.status_code == 404:
+            try:
+                workflow = await _comfyui_client().get_workflow(name)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
                     skipped.append({"name": name, "reason": "workflow not found"})
                     continue
-                resp.raise_for_status()
-                workflow = resp.json()
+                raise
             info = await template_manager.extract_template_info(workflow)
             template = template_manager.update_template(name, {
                 "workflow": workflow,

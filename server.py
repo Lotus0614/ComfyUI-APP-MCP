@@ -236,21 +236,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     async def _upload_to_comfyui(filename: str, image_bytes: bytes, overwrite: bool) -> dict:
         """Upload image bytes to ComfyUI /upload/image endpoint."""
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{config.get_comfyui_api_url()}/upload/image",
-                headers=config.get_comfyui_headers(),
-                files={"image": (filename, image_bytes)},
-                data={"overwrite": str(overwrite).lower()},
-                timeout=30,
-            )
-            if resp.status_code != 200:
-                try:
-                    error_body = resp.json()
-                except Exception:
-                    error_body = resp.text
-                return {"error": f"Upload failed ({resp.status_code})", "details": error_body}
-            return resp.json()
+        return await client.upload_image_bytes(filename, image_bytes, overwrite=overwrite)
 
     @mcp.tool()
     async def run_template(name: str, params: str, wait: bool = True, bindings: str = "{}") -> str:
