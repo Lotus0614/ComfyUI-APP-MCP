@@ -19,7 +19,8 @@ from comfy_api.latest import ComfyExtension, io
 
 from .server import create_mcp_server
 from . import routes  # noqa: F401 — register aiohttp routes on import
-from . import config, template_manager
+from . import config
+from .media_proxy import MediaProxyMiddleware, PublicURLMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -32,36 +33,10 @@ MCP_HOST = config.get_mcp_host()
 async def _run_mcp_background():
     """Run the MCP server as a background uvicorn task."""
     import uvicorn
-    from starlette.middleware import Middleware
-    from starlette.types import ASGIApp, Receive, Scope, Send
-
-    class ComfyUIPublicURLMiddleware:
-        """Read comfyui_url from query params or header, expose to template_manager."""
-
-        def __init__(self, app: ASGIApp):
-            self.app = app
-
-        async def __call__(self, scope: Scope, receive: Receive, send: Send):
-            if scope["type"] == "http":
-                url = None
-                # 1) Query param ?comfyui_url=...  (direct connection)
-                from urllib.parse import parse_qs
-                qs = parse_qs(scope.get("query_string", b"").decode())
-                url = qs.get("comfyui_url", [None])[0]
-                # 2) Header  (proxied from ComfyUI /app-mcp route)
-                if not url:
-                    for k, v in scope.get("headers", []):
-                        if k == b"comfyui_url":
-                            url = v.decode()
-                            break
-                if url:
-                    template_manager._comfyui_public_url.set(url.rstrip("/"))
-            await self.app(scope, receive, send)
 
     mcp = create_mcp_server()
     app = mcp.streamable_http_app()
-    # Wrap with our middleware to capture the query param
-    app = ComfyUIPublicURLMiddleware(app)
+    app = MediaProxyMiddleware(PublicURLMiddleware(app))
 
     config = uvicorn.Config(
         app=app,
