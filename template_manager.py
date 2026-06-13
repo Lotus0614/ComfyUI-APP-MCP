@@ -117,6 +117,7 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
         if not node:
             continue
         widgets_values = node.get("widgets_values", [])
+        found = False
 
         for inp in node.get("inputs", []):
             widget_info = inp.get("widget")
@@ -127,6 +128,7 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
             if target_widget and widget_name != target_widget:
                 continue
             label = inp.get("label") or widget_name
+            found = True
 
             entry = {
                 "node_id": node_id,
@@ -140,6 +142,28 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                     entry["default"] = default
 
             inputs[label] = entry
+
+        # Fallback: check hidden inputs from node_defs (e.g., lora_loader_data)
+        if target_widget and not found and node_defs:
+            class_type = node.get("type", "")
+            node_def = node_defs.get(class_type, {})
+            input_def = node_def.get("input", {})
+            hidden = input_def.get("hidden", {})
+            if target_widget in hidden:
+                spec = hidden[target_widget]
+                widget_type = spec[0] if isinstance(spec, list) and spec else "STRING"
+                if isinstance(widget_type, list):
+                    widget_type = "COMBO"
+                entry = {
+                    "node_id": node_id,
+                    "widget": target_widget,
+                    "type": widget_type if isinstance(widget_type, str) else "STRING",
+                }
+                if widgets_values:
+                    default = _read_widget_default(node, target_widget, node_defs)
+                    if default is not None:
+                        entry["default"] = default
+                inputs[target_widget] = entry
     return inputs
 
 
@@ -332,7 +356,6 @@ def list_templates(include_disabled: bool = False) -> list[dict]:
             templates.append({
                 "name": data.get("name", f.stem),
                 "title": title,
-                "description": data.get("description", ""),
                 "disabled": disabled,
                 "input_count": len(data.get("inputs", {})),
                 "output_count": len(data.get("outputs", {})),
@@ -629,9 +652,10 @@ def _get_node_widget_names(node: dict, node_defs: dict) -> list[str]:
     input_def = node_def.get("input", {})
     required = input_def.get("required", {})
     optional = input_def.get("optional", {})
+    hidden = input_def.get("hidden", {})
     names = []
-    for input_name in list(required.keys()) + list(optional.keys()):
-        spec = required.get(input_name) or optional.get(input_name)
+    for input_name in list(required.keys()) + list(optional.keys()) + list(hidden.keys()):
+        spec = required.get(input_name) or optional.get(input_name) or hidden.get(input_name)
         if spec and _is_widget_input(spec):
             names.append(input_name)
     return names
@@ -810,12 +834,14 @@ def _ui_workflow_to_api_prompt(workflow: dict, node_defs: dict) -> dict:
         input_def = node_def.get("input", {})
         required_inputs = input_def.get("required", {})
         optional_inputs = input_def.get("optional", {})
+        hidden_inputs = input_def.get("hidden", {})
 
         # Build ordered list of widget input names from the definition
-        all_input_names = list(required_inputs.keys()) + list(optional_inputs.keys())
+        # Include hidden inputs (e.g., ZmlPowerLoraLoader's lora_loader_data)
+        all_input_names = list(required_inputs.keys()) + list(optional_inputs.keys()) + list(hidden_inputs.keys())
         widget_names = []
         for input_name in all_input_names:
-            spec = required_inputs.get(input_name) or optional_inputs.get(input_name)
+            spec = required_inputs.get(input_name) or optional_inputs.get(input_name) or hidden_inputs.get(input_name)
             if spec and _is_widget_input(spec):
                 widget_names.append(input_name)
 
