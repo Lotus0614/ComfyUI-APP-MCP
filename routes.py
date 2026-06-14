@@ -108,11 +108,12 @@ async def create_template(request):
     data = await request.json()
     name = data.get("name")
     workflow = data.get("workflow")
+    api_prompt = data.get("api_prompt")  # Pre-converted API format from frontend
     if not name or not workflow:
         return web.json_response({"error": "name and workflow required"}, status=400)
     if not isinstance(workflow, dict) or "nodes" not in workflow:
         return web.json_response({"error": "Invalid workflow content (missing nodes)"}, status=400)
-    template = await template_manager.save_template(name, workflow)
+    template = await template_manager.save_template(name, workflow, api_prompt=api_prompt)
     return web.json_response(template)
 
 
@@ -129,6 +130,7 @@ async def auto_create_templates(request):
     created = []
     skipped = []
     failed = []
+    needs_api_prompt = []
 
     for item in items:
         path = item.get("path", "") if isinstance(item, dict) else str(item)
@@ -146,6 +148,7 @@ async def auto_create_templates(request):
                 continue
             await template_manager.save_template(name, workflow)
             created.append({"name": name, "title": info.get("title", "")})
+            needs_api_prompt.append(name)
         except Exception as e:
             logger.error(f"[MCP] auto_create_templates: failed for workflow '{name}': {e}")
             failed.append({"name": name, "error": str(e)})
@@ -154,6 +157,7 @@ async def auto_create_templates(request):
         "created": created,
         "skipped": skipped,
         "failed": failed,
+        "needs_api_prompt": needs_api_prompt,
     })
 
 
@@ -175,6 +179,7 @@ async def batch_refresh_templates(request):
     refreshed = []
     skipped = []
     failed = []
+    needs_api_prompt = []
 
     for template_info in templates:
         name = template_info.get("name", "")
@@ -189,6 +194,9 @@ async def batch_refresh_templates(request):
                     continue
                 raise
             info = await template_manager.extract_template_info(workflow)
+            # Check if template needs api_prompt generation
+            existing = template_manager.get_template(name)
+            has_api_prompt = existing and existing.get("api_prompt")
             template = template_manager.update_template(name, {
                 "workflow": workflow,
                 "inputs": info.get("inputs", {}),
@@ -200,6 +208,8 @@ async def batch_refresh_templates(request):
                 failed.append({"name": name, "error": "template not found"})
                 continue
             refreshed.append({"name": name, "title": info.get("title", "")})
+            if not has_api_prompt:
+                needs_api_prompt.append(name)
         except Exception as e:
             logger.error(f"[MCP] batch_refresh_templates: failed for template '{name}': {e}")
             failed.append({"name": name, "error": str(e)})
@@ -208,6 +218,7 @@ async def batch_refresh_templates(request):
         "refreshed": refreshed,
         "skipped": skipped,
         "failed": failed,
+        "needs_api_prompt": needs_api_prompt,
     })
 
 

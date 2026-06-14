@@ -4,7 +4,6 @@ import asyncio
 import copy
 import json
 import logging
-import random
 import contextvars
 
 import httpx
@@ -170,8 +169,7 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
 def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
     """Read the current widget value from a node's widgets_values by widget name.
 
-    Uses the same index computation as _ui_workflow_to_api_prompt to account
-    for hidden control_after_generate widgets.
+    Handles hidden control_after_generate widgets and dynamic sub-inputs.
     """
     class_type = node.get("type", "")
     widgets_values = node.get("widgets_values", [])
@@ -183,7 +181,7 @@ def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
     required = input_def.get("required", {})
     optional = input_def.get("optional", {})
 
-    # Build ordered widget names (same logic as _get_node_widget_names)
+    # Build ordered widget names
     widget_names = []
     for input_name in list(required.keys()) + list(optional.keys()):
         spec = required.get(input_name) or optional.get(input_name)
@@ -191,7 +189,6 @@ def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
             widget_names.append(input_name)
 
     # Build all_widgets with hidden controls and dynamic sub-inputs
-    # (same logic as _ui_workflow_to_api_prompt)
     all_widgets = []  # [(name, is_hidden)]
     vi = 0
     for wname in widget_names:
@@ -597,7 +594,7 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
     return result
 
 
-async def save_template(name: str, workflow: dict, outputs: dict | None = None) -> dict:
+async def save_template(name: str, workflow: dict, outputs: dict | None = None, api_prompt: dict | None = None) -> dict:
     _ensure_dir()
     info = await extract_template_info(workflow)
     template = {
@@ -606,6 +603,7 @@ async def save_template(name: str, workflow: dict, outputs: dict | None = None) 
         "description": info["description"],
         "disabled": False,
         "workflow": workflow,
+        "api_prompt": api_prompt,  # Pre-converted API format from frontend
         "inputs": info["inputs"],
         "outputs": outputs or info["outputs"],
     }
@@ -620,6 +618,8 @@ def update_template(name: str, updates: dict) -> dict | None:
         return None
     if "workflow" in updates:
         template["workflow"] = updates["workflow"]
+    if "api_prompt" in updates:
+        template["api_prompt"] = updates["api_prompt"]
     if "outputs" in updates:
         template["outputs"] = updates["outputs"]
     if "title" in updates:
@@ -644,129 +644,6 @@ def delete_template(name: str) -> bool:
 
 
 # ── Execution ─────────────────────────────────────────────
-
-def _get_node_widget_names(node: dict, node_defs: dict) -> list[str]:
-    """Get ordered list of widget input names for a node from node definitions."""
-    class_type = node.get("type", "")
-    node_def = node_defs.get(class_type, {})
-    input_def = node_def.get("input", {})
-    required = input_def.get("required", {})
-    optional = input_def.get("optional", {})
-    hidden = input_def.get("hidden", {})
-    names = []
-    for input_name in list(required.keys()) + list(optional.keys()) + list(hidden.keys()):
-        spec = required.get(input_name) or optional.get(input_name) or hidden.get(input_name)
-        if spec and _is_widget_input(spec):
-            names.append(input_name)
-    return names
-
-
-def _apply_inputs(workflow: dict, inputs: dict, params: dict, node_defs: dict) -> dict:
-    """Apply parameter values to the workflow's widget_values."""
-    workflow = copy.deepcopy(workflow)
-    nodes_by_id = {n["id"]: n for n in workflow.get("nodes", [])}
-
-    for param_name, value in params.items():
-        if param_name not in inputs:
-            continue
-        inp = inputs[param_name]
-        node = nodes_by_id.get(inp["node_id"])
-        if not node:
-            continue
-        widget_name = inp["widget"]
-
-        # Get node definition to compute correct widget index
-        class_type = node.get("type", "")
-        node_def = node_defs.get(class_type, {})
-        input_def = node_def.get("input", {})
-        required = input_def.get("required", {})
-        optional = input_def.get("optional", {})
-        widget_names = _get_node_widget_names(node, node_defs)
-
-        _set_widget_value(node, widget_name, value, widget_names, required, optional)
-
-    return workflow
-
-
-def _set_widget_value(node: dict, widget_name: str, value,
-                      widget_names: list[str] | None = None,
-                      required: dict | None = None,
-                      optional: dict | None = None):
-    """Set a widget value on a node by widget name.
-
-    Uses widget_names and input specs to compute the correct index in widgets_values,
-    accounting for hidden UI widgets like control_after_generate and dynamic sub-inputs.
-    """
-    values = node.get("widgets_values", [])
-    if not values:
-        return
-
-    required = required or {}
-    optional = optional or {}
-
-    if widget_names:
-        # Build ordered list of ALL widgets (definition + hidden + dynamic sub-inputs)
-        # Detect hidden control_after_generate widgets by value pattern,
-        # and dynamic sub-inputs by checking the node's inputs array.
-        all_widgets = []
-        vi = 0
-        for wname in widget_names:
-            all_widgets.append(wname)
-            vi += 1
-            spec = required.get(wname) or optional.get(wname)
-            is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
-            is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-            # After a dynamic combo widget, add its active sub-inputs
-            if is_dynamic_combo and vi > 0:
-                selected_key = values[vi - 1] if vi - 1 < len(values) else None
-                combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
-                for opt in combo_options:
-                    if isinstance(opt, dict) and opt.get("key") == selected_key:
-                        req = opt.get("inputs", {}).get("required", {})
-                        for sub_name in req:
-                            all_widgets.append(f"{wname}.{sub_name}")
-                            vi += 1
-                        break
-            elif is_int_float and vi < len(values):
-                next_val = values[vi]
-                if next_val in ("randomize", "increment", "decrement", "fixed"):
-                    all_widgets.append(None)
-                    vi += 1
-
-        # Find the target widget's index in all_widgets
-        for vi, wname in enumerate(all_widgets):
-            if wname == widget_name:
-                if 0 <= vi < len(values):
-                    values[vi] = value
-                return
-        return
-
-    # Single-widget fallback
-    if len(values) == 1:
-        values[0] = value
-
-
-def _resolve_widget_value(value, spec):
-    """Resolve UI-specific widget values to API-compatible values."""
-    if not isinstance(spec, list) or len(spec) < 1:
-        return value
-    type_name = spec[0] if isinstance(spec[0], str) else None
-    if type_name == "INT" and isinstance(value, str):
-        if value == "randomize":
-            return random.randint(0, 2**32 - 1)
-        if value in ("increment", "decrement"):
-            return spec[1].get("default", 0) if len(spec) > 1 and isinstance(spec[1], dict) else 0
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            return value
-    if type_name == "FLOAT" and isinstance(value, str):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return value
-    return value
-
 
 def _is_widget_input(spec) -> bool:
     """Check if an input spec describes a widget (not a data connection).
@@ -799,139 +676,6 @@ def _is_widget_input(spec) -> bool:
         if isinstance(first, list):
             return True  # Combo options list
     return False
-
-
-def _ui_workflow_to_api_prompt(workflow: dict, node_defs: dict) -> dict:
-    """Convert UI workflow format to API prompt format using object_info definitions.
-
-    For each node:
-    1. Get input order from node_defs[class_type]["input"]["required"] + ["optional"]
-    2. Map widgets_values to inputs by matching widget names
-    3. Map linked inputs to [source_node, output_index]
-    """
-    nodes = workflow.get("nodes", [])
-    links = workflow.get("links", [])
-
-    # Filter out UI-only nodes
-    exec_nodes = [n for n in nodes if n.get("type") not in _UI_ONLY_TYPES]
-    exec_node_ids = {n["id"] for n in exec_nodes}
-
-    # Build link map: link_id -> (source_node_id, source_output_idx)
-    link_map = {}
-    for link in links:
-        if len(link) >= 6:
-            link_id, src_node, src_output = link[0], link[1], link[2]
-            if src_node in exec_node_ids:
-                link_map[link_id] = (src_node, src_output)
-
-    prompt = {}
-    for node in exec_nodes:
-        node_id = str(node["id"])
-        class_type = node["type"]
-
-        # Get node definition from object_info
-        node_def = node_defs.get(class_type, {})
-        input_def = node_def.get("input", {})
-        required_inputs = input_def.get("required", {})
-        optional_inputs = input_def.get("optional", {})
-        hidden_inputs = input_def.get("hidden", {})
-
-        # Build ordered list of widget input names from the definition
-        # Include hidden inputs (e.g., ZmlPowerLoraLoader's lora_loader_data)
-        all_input_names = list(required_inputs.keys()) + list(optional_inputs.keys()) + list(hidden_inputs.keys())
-        widget_names = []
-        for input_name in all_input_names:
-            spec = required_inputs.get(input_name) or optional_inputs.get(input_name) or hidden_inputs.get(input_name)
-            if spec and _is_widget_input(spec):
-                widget_names.append(input_name)
-
-        # Map connected inputs (data connections with links)
-        connected_inputs = {}
-        for inp in node.get("inputs", []):
-            link_id = inp.get("link")
-            if link_id is not None and link_id in link_map:
-                src_node, src_output = link_map[link_id]
-                connected_inputs[inp["name"]] = [str(src_node), src_output]
-
-        # Map converted widgets (widget → input with different name)
-        converted_widgets = {}
-        for inp in node.get("inputs", []):
-            w = inp.get("widget")
-            if w:
-                converted_widgets[w["name"]] = inp["name"]
-
-        # Build API inputs
-        api_inputs = {}
-        api_inputs.update(connected_inputs)
-
-        widget_values = node.get("widgets_values", [])
-
-        # Key insight: widgets_values contains ALL widgets including hidden UI controls
-        # (e.g. control_after_generate after INT seed) and dynamic sub-inputs
-        # (e.g. resize_type.scale for COMFY_DYNAMICCOMBO_V3).
-        #
-        # For dynamic combos, widgets_values stores:
-        #   [selected_key, sub_input_value, ...]
-        # where selected_key identifies which sub-inputs are active, and the following
-        # values are the sub-input values (one per active sub-input).
-        if widget_values:
-            all_widgets = []  # [(name, is_hidden)]
-            vi = 0
-            for wname in widget_names:
-                all_widgets.append((wname, False))
-                vi += 1
-                spec = required_inputs.get(wname) or optional_inputs.get(wname)
-                is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
-                is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-                # After a dynamic combo widget, check for sub-input values.
-                # The selected key determines which sub-inputs are active.
-                # For each active sub-input, there's a value in widgets_values.
-                if is_dynamic_combo and vi > 0:
-                    selected_key = widget_values[vi - 1]
-                    # Find the selected option's sub-inputs
-                    combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
-                    sub_inputs = []
-                    for opt in combo_options:
-                        if isinstance(opt, dict) and opt.get("key") == selected_key:
-                            req = opt.get("inputs", {}).get("required", {})
-                            sub_inputs = list(req.keys())
-                            break
-                    # Add sub-input widgets (they consume values from widgets_values)
-                    for sub_name in sub_inputs:
-                        full_name = f"{wname}.{sub_name}"
-                        all_widgets.append((full_name, False))
-                        vi += 1
-                elif is_int_float and vi < len(widget_values):
-                    next_val = widget_values[vi]
-                    if next_val in ("randomize", "increment", "decrement", "fixed"):
-                        all_widgets.append(("_hidden_" + wname, True))
-                        vi += 1
-
-            # Now map: iterate all_widgets and widgets_values together
-            vi = 0
-            for wname, is_hidden in all_widgets:
-                if vi >= len(widget_values):
-                    break
-                if is_hidden:
-                    # Skip hidden widget value
-                    vi += 1
-                    continue
-                input_name = converted_widgets.get(wname, wname)
-                if input_name in connected_inputs:
-                    # Connected: skip value (link wins)
-                    vi += 1
-                    continue
-                # Use widget value
-                widget_spec = required_inputs.get(wname) or optional_inputs.get(wname)
-                api_inputs[input_name] = _resolve_widget_value(widget_values[vi], widget_spec) if widget_spec else widget_values[vi]
-                vi += 1
-
-        prompt[node_id] = {
-            "class_type": class_type,
-            "inputs": api_inputs,
-        }
-
-    return prompt
 
 
 async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dict:
@@ -1068,6 +812,27 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
     return result_payload
 
 
+def _inject_widget_values(api_prompt_data: dict, inputs: dict, params: dict) -> dict:
+    """Inject user parameters into pre-converted API prompt.
+
+    The API prompt is already in the correct format - we just need to replace widget values.
+    """
+    import copy
+    api_prompt = copy.deepcopy(api_prompt_data)
+
+    for param_name, value in params.items():
+        if param_name not in inputs:
+            continue
+        inp = inputs[param_name]
+        node_id = str(inp["node_id"])
+        widget_name = inp["widget"]
+
+        if node_id in api_prompt:
+            api_prompt[node_id]["inputs"][widget_name] = value
+
+    return api_prompt
+
+
 async def execute_template(name: str, params: dict, wait: bool = True, timeout: float = 300, bindings: dict | None = None) -> dict:
     """Execute a template with given parameters.
 
@@ -1088,21 +853,17 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
 
     inputs = template.get("inputs", {})
     outputs = template.get("outputs", {})
-    workflow = template.get("workflow", {})
     params = dict(params)
 
     if bindings:
         resolved_binding_params = await _resolve_run_bindings(bindings)
         params.update(resolved_binding_params)
 
-    # Get node definitions from ComfyUI (needed for widget index computation)
-    node_defs = await _get_node_definitions()
-
-    # Apply input parameters to workflow
-    workflow = _apply_inputs(workflow, inputs, params, node_defs)
-
-    # Convert UI workflow to API prompt
-    api_prompt = _ui_workflow_to_api_prompt(workflow, node_defs)
+    # Generate API prompt
+    api_prompt_data = template.get("api_prompt")
+    if not api_prompt_data:
+        return {"error": "Template missing api_prompt. Please refresh the template in the frontend."}
+    api_prompt = _inject_widget_values(api_prompt_data, inputs, params)
 
     # Submit to ComfyUI
     try:
