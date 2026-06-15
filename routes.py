@@ -109,8 +109,8 @@ async def create_template(request):
     name = data.get("name")
     workflow = data.get("workflow")
     api_prompt = data.get("api_prompt")  # Pre-converted API format from frontend
-    if not name or not workflow:
-        return web.json_response({"error": "name and workflow required"}, status=400)
+    if not name or not workflow or not api_prompt:
+        return web.json_response({"error": "name, workflow and api_prompt required"}, status=400)
     if not isinstance(workflow, dict) or "nodes" not in workflow:
         return web.json_response({"error": "Invalid workflow content (missing nodes)"}, status=400)
     template = await template_manager.save_template(name, workflow, api_prompt=api_prompt)
@@ -142,12 +142,11 @@ async def auto_create_templates(request):
             continue
         try:
             workflow = await client.get_workflow(name)
-            info = await template_manager.extract_template_info(workflow)
-            if not info.get("title"):
+            title, _ = template_manager._extract_title_and_description(workflow)
+            if not title:
                 skipped.append({"name": name, "reason": "missing title markdown"})
                 continue
-            await template_manager.save_template(name, workflow)
-            created.append({"name": name, "title": info.get("title", "")})
+            created.append({"name": name, "title": title})
             needs_api_prompt.append(name)
         except Exception as e:
             logger.error(f"[MCP] auto_create_templates: failed for workflow '{name}': {e}")
@@ -179,7 +178,6 @@ async def batch_refresh_templates(request):
     refreshed = []
     skipped = []
     failed = []
-    needs_api_prompt = []
 
     for template_info in templates:
         name = template_info.get("name", "")
@@ -193,10 +191,15 @@ async def batch_refresh_templates(request):
                     skipped.append({"name": name, "reason": "workflow not found"})
                     continue
                 raise
-            info = await template_manager.extract_template_info(workflow)
-            # Check if template needs api_prompt generation
             existing = template_manager.get_template(name)
-            has_api_prompt = existing and existing.get("api_prompt")
+            if not existing:
+                failed.append({"name": name, "error": "template not found"})
+                continue
+            api_prompt = existing.get("api_prompt")
+            if not isinstance(api_prompt, dict):
+                failed.append({"name": name, "error": "missing api_prompt"})
+                continue
+            info = await template_manager.extract_template_info(workflow, api_prompt)
             template = template_manager.update_template(name, {
                 "workflow": workflow,
                 "inputs": info.get("inputs", {}),
@@ -208,8 +211,6 @@ async def batch_refresh_templates(request):
                 failed.append({"name": name, "error": "template not found"})
                 continue
             refreshed.append({"name": name, "title": info.get("title", "")})
-            if not has_api_prompt:
-                needs_api_prompt.append(name)
         except Exception as e:
             logger.error(f"[MCP] batch_refresh_templates: failed for template '{name}': {e}")
             failed.append({"name": name, "error": str(e)})
@@ -218,7 +219,6 @@ async def batch_refresh_templates(request):
         "refreshed": refreshed,
         "skipped": skipped,
         "failed": failed,
-        "needs_api_prompt": needs_api_prompt,
     })
 
 
@@ -273,8 +273,9 @@ async def extract_template(request):
         logger.error(f"[MCP] extract_template: invalid JSON body: {e}")
         return web.json_response({"error": f"Invalid JSON: {e}"}, status=400)
     workflow = data.get("workflow")
-    if not workflow:
-        return web.json_response({"error": "workflow required"}, status=400)
+    api_prompt = data.get("api_prompt")
+    if not workflow or not api_prompt:
+        return web.json_response({"error": "workflow and api_prompt required"}, status=400)
     if isinstance(workflow, str):
         try:
             workflow = json.loads(workflow)
@@ -282,7 +283,7 @@ async def extract_template(request):
             logger.error(f"[MCP] extract_template: workflow is not valid JSON: {e}")
             return web.json_response({"error": f"Invalid workflow JSON: {e}"}, status=400)
     try:
-        info = await template_manager.extract_template_info(workflow)
+        info = await template_manager.extract_template_info(workflow, api_prompt)
         return web.json_response(info)
     except Exception as e:
         logger.error(f"[MCP] extract_template error: {e}")

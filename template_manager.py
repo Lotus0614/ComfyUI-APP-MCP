@@ -32,6 +32,8 @@ _UI_ONLY_TYPES = {
     "MarkdownNote", "Note", "Reroute", "PrimitiveNode",
 }
 
+_MISSING = object()
+
 # Cache for object_info node definitions
 _node_defs_cache: dict | None = None
 
@@ -73,6 +75,60 @@ def _extract_readme(workflow: dict) -> str:
     return _extract_markdown_note(workflow, "README") or ""
 
 
+def _workflow_nodes(workflow: dict) -> list[dict]:
+    nodes = workflow.get("nodes", [])
+    return nodes if isinstance(nodes, list) else []
+
+
+def _node_map_by_id(workflow: dict, *, stringify: bool = False) -> dict:
+    nodes = _workflow_nodes(workflow)
+    result = {}
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id is None:
+            continue
+        result[str(node_id) if stringify else node_id] = node
+    return result
+
+
+def _linear_data(workflow: dict) -> dict:
+    extra = workflow.get("extra", {})
+    if not isinstance(extra, dict):
+        return {}
+    linear = extra.get("linearData", {})
+    return linear if isinstance(linear, dict) else {}
+
+
+def _linear_items(workflow: dict, key: str) -> list:
+    items = _linear_data(workflow).get(key)
+    return items if isinstance(items, list) else []
+
+
+def _coerce_node_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _linear_input_refs(workflow: dict) -> list[tuple[int, str | None]]:
+    """Return user-selected template input references as (node_id, widget_name)."""
+    refs = []
+    for item in _linear_items(workflow, "inputs"):
+        raw_node_id = item[0] if isinstance(item, list) and item else item
+        node_id = _coerce_node_id(raw_node_id)
+        if node_id is None:
+            continue
+        widget_name = item[1] if isinstance(item, list) and len(item) > 1 else None
+        refs.append((node_id, widget_name))
+    return refs
+
+
+def _linear_output_ids(workflow: dict) -> list[str]:
+    """Return user-selected template output node ids."""
+    return [str(item) for item in _linear_items(workflow, "outputs") if item is not None]
+
+
 def _extract_title_and_description(workflow: dict) -> tuple[str, str]:
     """Extract title and description from MarkdownNote nodes.
 
@@ -92,202 +148,149 @@ def _extract_title_and_description(workflow: dict) -> tuple[str, str]:
     return title, description
 
 
-def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
-    """Extract inputs from linearData.inputs."""
-    nodes = workflow.get("nodes", [])
-    node_map = {n["id"]: n for n in nodes}
+def _input_spec_sections(node: dict, node_defs: dict | None) -> tuple[dict, dict, dict]:
+    if not node_defs:
+        return {}, {}, {}
+    node_def = node_defs.get(node.get("type", ""), {})
+    input_def = node_def.get("input", {})
+    required = input_def.get("required", {})
+    optional = input_def.get("optional", {})
+    hidden = input_def.get("hidden", {})
+    return (
+        required if isinstance(required, dict) else {},
+        optional if isinstance(optional, dict) else {},
+        hidden if isinstance(hidden, dict) else {},
+    )
 
-    linear_inputs = []  # list of (node_id, widget_name)
-    extra = workflow.get("extra", {})
-    if isinstance(extra, dict):
-        linear = extra.get("linearData", {})
-        if isinstance(linear, dict):
-            li = linear.get("inputs")
-            if isinstance(li, list):
-                for item in li:
-                    # item = [node_id, widget_name]
-                    node_id = int(item[0]) if isinstance(item, list) else int(item)
-                    widget = item[1] if isinstance(item, list) and len(item) > 1 else None
-                    linear_inputs.append((node_id, widget))
+
+def _widget_type_from_spec(spec) -> str:
+    widget_type = spec[0] if isinstance(spec, list) and spec else "STRING"
+    if isinstance(widget_type, list):
+        return "COMBO"
+    return widget_type if isinstance(widget_type, str) else "STRING"
+
+
+def _api_prompt_input_value(api_prompt: dict, node_id: int, widget_name: str):
+    node_prompt = api_prompt.get(str(node_id))
+    if not isinstance(node_prompt, dict):
+        return _MISSING
+    inputs = node_prompt.get("inputs")
+    if not isinstance(inputs, dict):
+        return _MISSING
+    return inputs.get(widget_name, _MISSING)
+
+
+def _extract_inputs(
+    workflow: dict,
+    node_defs: dict | None = None,
+    api_prompt: dict | None = None,
+) -> dict:
+    """Extract inputs from linearData.inputs."""
+    if not isinstance(api_prompt, dict):
+        raise ValueError("api_prompt is required to extract template inputs")
+
+    node_map = _node_map_by_id(workflow)
 
     inputs = {}
-    for node_id, target_widget in linear_inputs:
+    for node_id, target_widget in _linear_input_refs(workflow):
         node = node_map.get(node_id)
         if not node:
             continue
-        widgets_values = node.get("widgets_values", [])
-        found = False
 
+        descriptors = {}
         for inp in node.get("inputs", []):
             widget_info = inp.get("widget")
             if not widget_info:
                 continue
             widget_name = widget_info.get("name", inp.get("name", ""))
-            # Only register the widget specified in linearData
-            if target_widget and widget_name != target_widget:
-                continue
-            label = inp.get("label") or widget_name
-            found = True
-
-            entry = {
-                "node_id": node_id,
+            descriptors[widget_name] = {
+                "label": inp.get("label") or widget_name,
                 "widget": widget_name,
                 "type": inp.get("type", "STRING"),
             }
 
-            if widgets_values and node_defs:
-                default = _read_widget_default(node, widget_name, node_defs)
-                if default is not None:
-                    entry["default"] = default
+        if target_widget:
+            if target_widget not in descriptors:
+                _, _, hidden = _input_spec_sections(node, node_defs)
+                if target_widget in hidden:
+                    descriptors[target_widget] = {
+                        "label": target_widget,
+                        "widget": target_widget,
+                        "type": _widget_type_from_spec(hidden[target_widget]),
+                    }
+                else:
+                    continue
+            selected_descriptors = [descriptors[target_widget]]
+        else:
+            selected_descriptors = descriptors.values()
 
-            inputs[label] = entry
-
-        # Fallback: check hidden inputs from node_defs (e.g., lora_loader_data)
-        if target_widget and not found and node_defs:
-            class_type = node.get("type", "")
-            node_def = node_defs.get(class_type, {})
-            input_def = node_def.get("input", {})
-            hidden = input_def.get("hidden", {})
-            if target_widget in hidden:
-                spec = hidden[target_widget]
-                widget_type = spec[0] if isinstance(spec, list) and spec else "STRING"
-                if isinstance(widget_type, list):
-                    widget_type = "COMBO"
-                entry = {
-                    "node_id": node_id,
-                    "widget": target_widget,
-                    "type": widget_type if isinstance(widget_type, str) else "STRING",
-                }
-                if widgets_values:
-                    default = _read_widget_default(node, target_widget, node_defs)
-                    if default is not None:
-                        entry["default"] = default
-                inputs[target_widget] = entry
+        for descriptor in selected_descriptors:
+            widget_name = descriptor["widget"]
+            entry = {
+                "node_id": node_id,
+                "widget": widget_name,
+                "type": descriptor["type"],
+            }
+            default = _api_prompt_input_value(api_prompt, node_id, widget_name)
+            if default is not _MISSING:
+                entry["default"] = default
+            inputs[descriptor["label"]] = entry
     return inputs
 
 
-def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
-    """Read the current widget value from a node's widgets_values by widget name.
+def _output_entry(node_id, title: str, comfy_type: str) -> dict:
+    return {
+        "node_id": node_id,
+        "type": _output_type_from_comfy(comfy_type),
+        "comfy_type": comfy_type,
+        "title": title,
+    }
 
-    Handles hidden control_after_generate widgets and dynamic sub-inputs.
-    """
+
+def _add_explicit_node_outputs(outputs: dict, node: dict, node_id: str) -> None:
     class_type = node.get("type", "")
-    widgets_values = node.get("widgets_values", [])
-    if not widgets_values:
-        return None
+    title = node.get("title") or class_type
+    node_outputs = node.get("outputs", [])
+    int_node_id = _coerce_node_id(node_id)
+    if int_node_id is None:
+        return
 
-    node_def = node_defs.get(class_type, {})
-    input_def = node_def.get("input", {})
-    required = input_def.get("required", {})
-    optional = input_def.get("optional", {})
+    if not node_outputs:
+        name = f"{title}_{node_id}_output"
+        outputs[name] = {
+            "node_id": int_node_id,
+            "type": "unknown",
+            "comfy_type": "unknown",
+            "title": title,
+        }
+        return
 
-    # Build ordered widget names
-    widget_names = []
-    for input_name in list(required.keys()) + list(optional.keys()):
-        spec = required.get(input_name) or optional.get(input_name)
-        if spec and _is_widget_input(spec):
-            widget_names.append(input_name)
-
-    # Build all_widgets with hidden controls and dynamic sub-inputs
-    all_widgets = []  # [(name, is_hidden)]
-    vi = 0
-    for wname in widget_names:
-        all_widgets.append((wname, False))
-        vi += 1
-        spec = required.get(wname) or optional.get(wname)
-        is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
-        is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-        # After a dynamic combo widget, add its active sub-inputs
-        if is_dynamic_combo and vi > 0:
-            selected_key = widgets_values[vi - 1] if vi - 1 < len(widgets_values) else None
-            combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
-            for opt in combo_options:
-                if isinstance(opt, dict) and opt.get("key") == selected_key:
-                    req = opt.get("inputs", {}).get("required", {})
-                    for sub_name in req:
-                        all_widgets.append((f"{wname}.{sub_name}", False))
-                        vi += 1
-                    break
-        elif is_int_float and vi < len(widgets_values):
-            next_val = widgets_values[vi]
-            if next_val in ("randomize", "increment", "decrement", "fixed"):
-                all_widgets.append(("_hidden_" + wname, True))
-                vi += 1
-
-    # Find the target widget and return its value
-    vi = 0
-    for wname, is_hidden in all_widgets:
-        if vi >= len(widgets_values):
-            break
-        if is_hidden:
-            vi += 1
-            continue
-        if wname == widget_name:
-            return widgets_values[vi]
-        vi += 1
-
-    return None
+    for out in node_outputs:
+        out_type = out.get("type", "")
+        name = f"{title}_{node_id}_{out.get('name', 'out')}"
+        outputs[name] = _output_entry(int_node_id, title, out_type)
 
 
 def _detect_output_nodes(workflow: dict) -> dict:
     """Detect output nodes from linearData.outputs (explicit user selection),
     falling back to auto-detection of terminal nodes."""
-    nodes = workflow.get("nodes", [])
-
-    # Build node_id → node mapping
-    node_map = {}
-    for node in nodes:
-        nid = node.get("id")
-        if nid is not None:
-            node_map[str(nid)] = node
-
-    # Try linearData.outputs first (explicit user selection in editor)
-    linear_outputs = None
-    extra = workflow.get("extra", {})
-    if isinstance(extra, dict):
-        linear = extra.get("linearData", {})
-        if isinstance(linear, dict):
-            lo = linear.get("outputs")
-            if isinstance(lo, list) and lo:
-                linear_outputs = [str(x) for x in lo]
+    nodes = _workflow_nodes(workflow)
+    node_map = _node_map_by_id(workflow, stringify=True)
+    linear_outputs = _linear_output_ids(workflow)
 
     outputs = {}
     if linear_outputs:
-        for nid in linear_outputs:
-            node = node_map.get(nid)
-            if not node:
+        for node_id in linear_outputs:
+            node = node_map.get(node_id)
+            if not node or node.get("type", "") in _UI_ONLY_TYPES:
                 continue
-            class_type = node.get("type", "")
-            title = node.get("title") or class_type
-            if class_type in _UI_ONLY_TYPES:
-                continue
-            node_outputs = node.get("outputs", [])
-            if node_outputs:
-                for out in node_outputs:
-                    out_type = out.get("type", "")
-                    name = f"{title}_{nid}_{out.get('name', 'out')}"
-                    outputs[name] = {
-                        "node_id": int(nid),
-                        "type": _output_type_from_comfy(out_type),
-                        "comfy_type": out_type,
-                        "title": title,
-                    }
-            else:
-                # Terminal node with no outputs (SaveImage, SaveAudio, etc.)
-                name = f"{title}_{nid}_output"
-                outputs[name] = {
-                    "node_id": int(nid),
-                    "type": "unknown",
-                    "comfy_type": "unknown",
-                    "title": title,
-                }
+            _add_explicit_node_outputs(outputs, node, node_id)
         return outputs
 
     # Fallback: auto-detect terminal nodes
-    links = workflow.get("links", [])
     used_outputs = set()
-    for link in links:
-        if len(link) >= 3:
+    for link in workflow.get("links", []):
+        if isinstance(link, list) and len(link) >= 3:
             used_outputs.add((link[1], link[2]))
 
     for node in nodes:
@@ -300,12 +303,7 @@ def _detect_output_nodes(workflow: dict) -> dict:
             if (node_id, out_idx) not in used_outputs:
                 out_type = out.get("type", "")
                 name = f"{title}_{node_id}_{out.get('name', out_idx)}"
-                outputs[name] = {
-                    "node_id": node_id,
-                    "type": _output_type_from_comfy(out_type),
-                    "comfy_type": out_type,
-                    "title": title,
-                }
+                outputs[name] = _output_entry(node_id, title, out_type)
     return outputs
 
 
@@ -321,14 +319,16 @@ def _output_type_from_comfy(comfy_type: str) -> str:
 
 
 
-async def extract_template_info(workflow: dict) -> dict:
+async def extract_template_info(workflow: dict, api_prompt: dict) -> dict:
     """Auto-extract template metadata from a workflow."""
+    if not isinstance(api_prompt, dict):
+        raise ValueError("api_prompt is required to extract template info")
     node_defs = await _get_node_definitions()
     title, description = _extract_title_and_description(workflow)
     return {
         "title": title,
         "description": description,
-        "inputs": _extract_inputs(workflow, node_defs),
+        "inputs": _extract_inputs(workflow, node_defs, api_prompt),
         "outputs": _detect_output_nodes(workflow),
     }
 
@@ -596,7 +596,9 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
 
 async def save_template(name: str, workflow: dict, outputs: dict | None = None, api_prompt: dict | None = None) -> dict:
     _ensure_dir()
-    info = await extract_template_info(workflow)
+    if not isinstance(api_prompt, dict):
+        raise ValueError("api_prompt is required to save a template")
+    info = await extract_template_info(workflow, api_prompt)
     template = {
         "name": name,
         "title": info["title"],
@@ -644,39 +646,6 @@ def delete_template(name: str) -> bool:
 
 
 # ── Execution ─────────────────────────────────────────────
-
-def _is_widget_input(spec) -> bool:
-    """Check if an input spec describes a widget (not a data connection).
-
-    Widget inputs have specs like:
-    - ["INT", {"default": 0, "min": 0, "max": 4096}]  → widget
-    - [["option1", "option2"]]  → combo widget
-    - ["FLOAT", {"default": 1.0}]  → widget
-    - ["STRING", {"multiline": True}]  → widget
-    - ["BOOLEAN", {"default": True}]  → widget
-    - ["COMFY_DYNAMICCOMBO_V3", {...}]  → dynamic combo widget (e.g. RTX resize_type)
-    - "MODEL"  → data connection (just a type string)
-    - ["MODEL"]  → data connection (single-element list with a type string that's not a basic type)
-    """
-    if isinstance(spec, str):
-        return False  # Simple type name = data connection
-    if isinstance(spec, list) and len(spec) >= 1:
-        first = spec[0]
-        if isinstance(first, str):
-            # Basic widget types
-            if first in ("INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"):
-                return True
-            # Dynamic combo widget (e.g. RTX nodes' resize_type)
-            if first.startswith("COMFY_DYNAMICCOMBO"):
-                return True
-            # Combo: list of options
-            if first.startswith(","):
-                return True
-            return False  # Type name like "MODEL", "IMAGE" = data connection
-        if isinstance(first, list):
-            return True  # Combo options list
-    return False
-
 
 async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dict:
     """Poll /history until the prompt completes or times out."""
@@ -761,7 +730,6 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
             continue
         output_meta = output_meta_by_node_id.get(node_id, {})
         name = output_meta.get("output_name") or node_names.get(node_id, f"node_{node_id}")
-        node_title = output_meta.get("title") or node_names.get(node_id, f"node_{node_id}")
 
         # Build simplified media entries (images, audio, gifs, etc.)
         media_urls = []

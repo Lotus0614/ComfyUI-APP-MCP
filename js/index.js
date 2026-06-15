@@ -204,17 +204,14 @@ function createTemplateWidget() {
                             `/workflows/${t.name}`,
                         );
 
-                        // Generate API prompt
-                        let apiPrompt = null;
-                        try {
-                            apiPrompt = await generateApiPrompt(wfContent);
-                        } catch (e) {
-                            console.warn('[MCP] Failed to generate API prompt during refresh:', e);
-                        }
+                        const apiPrompt = await generateApiPrompt(wfContent);
 
                         const info = await apiFetch('/templates/extract', {
                             method: 'POST',
-                            body: JSON.stringify({ workflow: wfContent }),
+                            body: JSON.stringify({
+                                workflow: wfContent,
+                                api_prompt: apiPrompt,
+                            }),
                         });
                         await apiFetch(`/templates/${t.name}`, {
                             method: 'PUT',
@@ -288,9 +285,13 @@ function createTemplateWidget() {
                     try {
                         const wfContent = await apiFetch(`/workflows/${name}`);
                         const apiPrompt = await generateApiPrompt(wfContent);
-                        await apiFetch(`/templates/${name}`, {
-                            method: 'PUT',
-                            body: JSON.stringify({ api_prompt: apiPrompt }),
+                        await apiFetch('/templates', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                name,
+                                workflow: wfContent,
+                                api_prompt: apiPrompt,
+                            }),
                         });
                         apiPromptGenerated++;
                     } catch (e) {
@@ -321,29 +322,7 @@ function createTemplateWidget() {
             const refreshed = result.refreshed?.length || 0;
             const skipped = result.skipped?.length || 0;
             const failed = result.failed?.length || 0;
-            const needsApiPrompt = result.needs_api_prompt || [];
-
-            // Generate api_prompt for templates that need it
-            let apiPromptGenerated = 0;
-            if (needsApiPrompt.length > 0) {
-                setActionInfo(`Generating API prompts for ${needsApiPrompt.length} templates...`);
-                for (const name of needsApiPrompt) {
-                    try {
-                        const wfContent = await apiFetch(`/workflows/${name}`);
-                        const apiPrompt = await generateApiPrompt(wfContent);
-                        await apiFetch(`/templates/${name}`, {
-                            method: 'PUT',
-                            body: JSON.stringify({ api_prompt: apiPrompt }),
-                        });
-                        apiPromptGenerated++;
-                    } catch (e) {
-                        console.warn(`[MCP] Failed to generate api_prompt for ${name}:`, e);
-                    }
-                }
-            }
-
-            const msg = `Batch refresh complete: ${refreshed} refreshed, ${skipped} skipped, ${failed} failed.` +
-                (apiPromptGenerated > 0 ? ` Generated API prompts for ${apiPromptGenerated} templates.` : '');
+            const msg = `Batch refresh complete: ${refreshed} refreshed, ${skipped} skipped, ${failed} failed.`;
             setActionInfo(msg, failed > 0);
             await loadTemplates();
         } catch (e) {
@@ -563,9 +542,13 @@ async function showCreateTemplateDialog(onDone) {
         preview.innerHTML = 'Analyzing workflow...';
         try {
             const wfContent = await apiFetch(`/workflows/${name}`);
+            const apiPrompt = await generateApiPrompt(wfContent);
             const info = await apiFetch('/templates/extract', {
                 method: 'POST',
-                body: JSON.stringify({ workflow: wfContent }),
+                body: JSON.stringify({
+                    workflow: wfContent,
+                    api_prompt: apiPrompt,
+                }),
             });
             extractedInfo = info;
 
@@ -601,13 +584,7 @@ async function showCreateTemplateDialog(onDone) {
         try {
             const wfContent = await apiFetch(`/workflows/${wfName}`);
 
-            // Generate API prompt using frontend's graphToPrompt
-            let apiPrompt = null;
-            try {
-                apiPrompt = await generateApiPrompt(wfContent);
-            } catch (e) {
-                console.warn('[MCP] Failed to generate API prompt, template will use backend conversion:', e);
-            }
+            const apiPrompt = await generateApiPrompt(wfContent);
 
             await apiFetch('/templates', {
                 method: 'POST',
