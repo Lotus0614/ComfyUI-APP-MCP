@@ -5,6 +5,7 @@ import copy
 import json
 import logging
 import contextvars
+import random
 
 import httpx
 
@@ -26,6 +27,9 @@ _comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar
 # Module-level cache for mcp_outputs, keyed by prompt_id.
 # Allows cross-call binding resolution without requiring source_outputs.
 _mcp_outputs_cache: dict[str, dict] = {}
+
+_SEED_INPUT_NAME = "seed"
+_MAX_COMFY_SEED = 2**64 - 1
 
 # UI-only node types that should not be submitted for execution
 _UI_ONLY_TYPES = {
@@ -853,7 +857,14 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
 
     inputs = template.get("inputs", {})
     outputs = template.get("outputs", {})
-    params = dict(params)
+    params = {
+        **{
+            input_name: random.randint(0, _MAX_COMFY_SEED)
+            for input_name in inputs
+            if input_name == _SEED_INPUT_NAME
+        },
+        **dict(params),
+    }
 
     if bindings:
         resolved_binding_params = await _resolve_run_bindings(bindings)

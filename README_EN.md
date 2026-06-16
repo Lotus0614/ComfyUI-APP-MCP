@@ -111,7 +111,7 @@ Returns template details including:
 
 - `title`: template title, extracted from the workflow `title` Markdown node
 - `description`: detailed description, extracted from the workflow `description` Markdown node
-- `inputs`: configurable input parameters, including name, type, and default value
+- `inputs`: configurable input parameters, including name, type, and default value. Inputs named `seed` are automatically randomized at runtime and are not returned to AI clients by MCP `get_template`.
 - `outputs`: output node definitions
 
 Disabled templates cannot be queried.
@@ -130,7 +130,7 @@ Disabled templates cannot expose template docs.
 Executes a template with parameter values.
 
 - `name`: template name
-- `params`: JSON string of parameter values, for example `'{"positive_prompt": "a cat", "seed": 42}'`
+- `params`: JSON string of parameter values, for example `'{"positive_prompt": "a cat"}'`. If the template contains an input named `seed`, the runtime injects a random seed automatically.
 - `wait`: whether to wait for completion, defaults to `true`
 - `bindings`: optional JSON string used to pull values from a previous result and inject them into current parameters
 
@@ -362,6 +362,10 @@ Make sure the workflow was saved to the server through ComfyUI **Save**, not **E
 ### Outputs are empty
 
 Make sure `linearData.outputs` in the workflow includes the node IDs you want to return.
+
+### How to use random seed
+
+In the app builder, name the seed input that should refresh automatically as `seed`. At runtime, the template injects a random seed automatically. `get_template` does not return this parameter to AI clients, and AI clients do not need to pass `seed` to `run_template`.
 
 ### Parameter mapping errors
 

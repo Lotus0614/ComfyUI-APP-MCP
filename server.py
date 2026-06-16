@@ -123,7 +123,11 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({
                 "name": template["name"],
                 "description": template.get("description", ""),
-                "inputs": template.get("inputs", {}),
+                "inputs": {
+                    key: value
+                    for key, value in template.get("inputs", {}).items()
+                    if key != "seed"
+                },
                 "outputs": template.get("outputs", {}),
             })
         except Exception as e:
