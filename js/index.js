@@ -41,16 +41,28 @@ async function apiFetch(path, options = {}) {
 async function generateApiPrompt(workflow) {
     // Save current graph state
     const originalGraph = app.graph.serialize();
+    const waitFrame = () =>
+        new Promise(resolve => requestAnimationFrame(resolve));
+    const waitForGraphNodes = async (timeoutMs = 1000) => {
+        const start = performance.now();
+        while (performance.now() - start < timeoutMs) {
+            if (app.graph._nodes?.length) return;
+            await waitFrame();
+        }
+        throw new Error('Failed to load workflow into graph');
+    };
 
     try {
         // Configure graph directly (no tab opening)
         app.graph.configure(workflow);
 
-        // Wait a frame for the graph to be ready
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await waitForGraphNodes();
 
         // Use frontend's graphToPrompt to generate API format
         const { output } = await app.graphToPrompt();
+        if (!output || Object.keys(output).length === 0) {
+            throw new Error('graphToPrompt returned empty output');
+        }
         return output;
     } finally {
         // Restore original graph
