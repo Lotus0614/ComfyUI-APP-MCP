@@ -29,7 +29,7 @@ _comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar
 _mcp_outputs_cache: dict[str, dict] = {}
 
 _SEED_INPUT_NAME = "seed"
-_MAX_COMFY_SEED = 2**64 - 1
+_MAX_COMFY_SEED = 2**50 - 1
 
 # UI-only node types that should not be submitted for execution
 _UI_ONLY_TYPES = {

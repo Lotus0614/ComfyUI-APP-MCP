@@ -36,12 +36,10 @@ const I18N = {
         error: 'Error: {message}',
         scanningWorkflows:
             'Scanning workflows and creating missing templates...',
-        generatingApiPrompts:
-            'Generating API prompts for {count} templates...',
+        generatingApiPrompts: 'Generating API prompts for {count} templates...',
         autoExtractComplete:
             'Auto extract complete: {created} created, {skipped} skipped, {failed} failed.',
-        generatedApiPrompts:
-            ' Generated API prompts for {count} templates.',
+        generatedApiPrompts: ' Generated API prompts for {count} templates.',
         autoExtractFailed: 'Auto extract failed: {message}',
         refreshingTemplates:
             'Refreshing all existing templates from workflows...',
@@ -163,7 +161,11 @@ try {
 }
 
 function normalizeLocale(locale) {
-    return String(locale || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+    return String(locale || '')
+        .toLowerCase()
+        .startsWith('zh')
+        ? 'zh'
+        : 'en';
 }
 
 let locale = normalizeLocale(navigator.language);
@@ -191,7 +193,9 @@ function t(key, params = {}) {
 
 async function updateLocale() {
     try {
-        const nextLocale = normalizeLocale(await api.getSetting('Comfy.Locale'));
+        const nextLocale = normalizeLocale(
+            await api.getSetting('Comfy.Locale'),
+        );
         if (nextLocale !== locale) {
             locale = nextLocale;
             return true;
@@ -226,6 +230,18 @@ async function apiFetch(path, options = {}) {
     }
 }
 
+const waitForGraphNodes = async (timeoutMs = 1000) => {
+    const waitFrame = () =>
+        new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const start = performance.now();
+    while (performance.now() - start < timeoutMs) {
+        if (app.graph._nodes?.length) return;
+        await waitFrame();
+    }
+    throw new Error('Failed to load workflow into graph');
+};
+
 /**
  * Generate API prompt from workflow using frontend's graphToPrompt.
  * Uses app.graph.configure() to avoid opening a new tab.
@@ -233,16 +249,6 @@ async function apiFetch(path, options = {}) {
 async function generateApiPrompt(workflow) {
     // Save current graph state
     const originalGraph = app.graph.serialize();
-    const waitFrame = () =>
-        new Promise(resolve => requestAnimationFrame(resolve));
-    const waitForGraphNodes = async (timeoutMs = 1000) => {
-        const start = performance.now();
-        while (performance.now() - start < timeoutMs) {
-            if (app.graph._nodes?.length) return;
-            await waitFrame();
-        }
-        throw new Error('Failed to load workflow into graph');
-    };
 
     try {
         // Configure graph directly (no tab opening)
@@ -258,7 +264,7 @@ async function generateApiPrompt(workflow) {
         return output;
     } finally {
         // Restore original graph
-        app.graph.configure(originalGraph);
+        app.graph.configure(JSON.parse(JSON.stringify(originalGraph)));
     }
 }
 
@@ -281,9 +287,11 @@ async function downloadFile(path, filename) {
 
 const S = {
     row: 'display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid #333;border-radius:6px;background:#202020;min-width:0;flex-wrap:wrap;',
-    detailRow: 'display:flex;align-items:flex-start;gap:10px;padding:6px 8px;border:1px solid #333;border-radius:6px;background:#202020;margin:4px 0;',
+    detailRow:
+        'display:flex;align-items:flex-start;gap:10px;padding:6px 8px;border:1px solid #333;border-radius:6px;background:#202020;margin:4px 0;',
     btn: 'padding:5px 12px;min-height:28px;cursor:pointer;border-radius:4px;',
-    smallBtn: 'padding:3px 8px;min-height:24px;cursor:pointer;font-size:11px;border-radius:4px;white-space:nowrap;',
+    smallBtn:
+        'padding:3px 8px;min-height:24px;cursor:pointer;font-size:11px;border-radius:4px;white-space:nowrap;',
     btnRow: 'display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;',
     label: 'flex:1;min-width:0;font-size:13px;line-height:1.35;overflow-wrap:anywhere;',
     section: 'font-size:12px;color:#aaa;margin:14px 0 6px;font-weight:bold;',
@@ -446,7 +454,10 @@ function createTemplateWidget() {
                         try {
                             apiPrompt = await generateApiPrompt(wfContent);
                         } catch (e) {
-                            console.warn('[MCP] Failed to generate API prompt during refresh:', e);
+                            console.warn(
+                                '[MCP] Failed to generate API prompt during refresh:',
+                                e,
+                            );
                         }
 
                         const info = await apiFetch('/templates/extract', {
@@ -527,7 +538,10 @@ function createTemplateWidget() {
                         });
                         apiPromptGenerated++;
                     } catch (e) {
-                        console.warn(`[MCP] Failed to generate api_prompt for ${name}:`, e);
+                        console.warn(
+                            `[MCP] Failed to generate api_prompt for ${name}:`,
+                            e,
+                        );
                     }
                 }
             }
@@ -542,10 +556,7 @@ function createTemplateWidget() {
             setActionInfo(msg, failed > 0);
             await loadTemplates();
         } catch (e) {
-            setActionInfo(
-                t('autoExtractFailed', { message: e.message }),
-                true,
-            );
+            setActionInfo(t('autoExtractFailed', { message: e.message }), true);
         } finally {
             autoCreateBtn.disabled = false;
             autoCreateBtn.textContent = t('autoExtractTemplates');
@@ -582,7 +593,10 @@ function createTemplateWidget() {
                         });
                         apiPromptGenerated++;
                     } catch (e) {
-                        console.warn(`[MCP] Failed to generate api_prompt for ${name}:`, e);
+                        console.warn(
+                            `[MCP] Failed to generate api_prompt for ${name}:`,
+                            e,
+                        );
                     }
                 }
             }
@@ -856,7 +870,10 @@ async function showCreateTemplateDialog(onDone) {
             try {
                 apiPrompt = await generateApiPrompt(wfContent);
             } catch (e) {
-                console.warn('[MCP] Failed to generate API prompt, template will use backend conversion:', e);
+                console.warn(
+                    '[MCP] Failed to generate API prompt, template will use backend conversion:',
+                    e,
+                );
             }
 
             await apiFetch('/templates', {
