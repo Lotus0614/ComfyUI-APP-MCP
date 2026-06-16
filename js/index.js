@@ -7,6 +7,200 @@
  */
 
 import { app } from '../../../scripts/app.js';
+import { api } from '../../../scripts/api.js';
+
+const I18N = {
+    en: {
+        refresh: 'Refresh',
+        createFromWorkflow: 'Create from Workflow',
+        autoExtractTemplates: 'Auto Extract Templates',
+        batchRefreshTemplates: 'Batch Refresh Templates',
+        exportTemplates: 'Export Templates',
+        details: 'Details',
+        enable: 'Enable',
+        disable: 'Disable',
+        delete: 'Delete',
+        close: 'Close',
+        cancel: 'Cancel',
+        createTemplate: 'Create Template',
+        working: 'Working...',
+        exporting: 'Exporting...',
+        loading: 'Loading...',
+        noTemplates:
+            'No templates yet. Click "Create from Workflow" to create one.',
+        templateCounts: '{inputs} in / {outputs} out',
+        disabled: 'disabled',
+        updateFailed: 'Update failed: {message}',
+        refreshFailed: 'Refresh failed: {message}',
+        deleteConfirm: 'Delete template "{name}"?',
+        error: 'Error: {message}',
+        scanningWorkflows:
+            'Scanning workflows and creating missing templates...',
+        generatingApiPrompts:
+            'Generating API prompts for {count} templates...',
+        autoExtractComplete:
+            'Auto extract complete: {created} created, {skipped} skipped, {failed} failed.',
+        generatedApiPrompts:
+            ' Generated API prompts for {count} templates.',
+        autoExtractFailed: 'Auto extract failed: {message}',
+        refreshingTemplates:
+            'Refreshing all existing templates from workflows...',
+        batchRefreshComplete:
+            'Batch refresh complete: {refreshed} refreshed, {skipped} skipped, {failed} failed.',
+        batchRefreshFailed: 'Batch refresh failed: {message}',
+        exportFailed: 'Export failed: {message}',
+        inputsParameters: 'Inputs (parameters):',
+        noInputsConfigured: 'No inputs configured',
+        outputs: 'Outputs:',
+        noOutputsConfigured: 'No outputs configured',
+        createTemplateFromWorkflow: 'Create Template from Workflow',
+        workflow: 'Workflow:',
+        searchWorkflows: 'Search workflows...',
+        noMatchingWorkflows: 'No matching workflows',
+        noWorkflowsFound: 'No workflows found',
+        errorLoadingWorkflows: 'Error loading workflows',
+        analyzingWorkflow: 'Analyzing workflow...',
+        description: 'Description:',
+        autoDetectedInputs: 'Auto-detected inputs ({count}):',
+        autoDetectedOutputs: 'Auto-detected outputs',
+        none: 'none',
+        failedCreateTemplate: 'Failed to create template: {message}',
+        mcpEndpoint: 'MCP endpoint: {url}',
+        mcpNotReachable: 'MCP server not reachable',
+        statusSetting: 'MCP Server Status',
+        templatesSetting: 'Templates',
+        statusCategory: 'Status',
+        templatesCategory: 'Templates',
+        templatesTooltip: 'Create and manage MCP templates from workflows',
+        nodeLabel: 'node',
+        defaultLabel: 'default',
+        creating: 'Creating...',
+    },
+    zh: {
+        refresh: '刷新',
+        createFromWorkflow: '从工作流创建',
+        autoExtractTemplates: '自动提取模板',
+        batchRefreshTemplates: '批量刷新模板',
+        exportTemplates: '导出模板',
+        details: '详情',
+        enable: '启用',
+        disable: '禁用',
+        delete: '删除',
+        close: '关闭',
+        cancel: '取消',
+        createTemplate: '创建模板',
+        working: '处理中...',
+        exporting: '导出中...',
+        loading: '加载中...',
+        noTemplates: '暂无模板。点击“从工作流创建”来创建模板。',
+        templateCounts: '{inputs} 输入 / {outputs} 输出',
+        disabled: '已禁用',
+        updateFailed: '更新失败：{message}',
+        refreshFailed: '刷新失败：{message}',
+        deleteConfirm: '删除模板“{name}”？',
+        error: '错误：{message}',
+        scanningWorkflows: '正在扫描工作流并创建缺失模板...',
+        generatingApiPrompts: '正在为 {count} 个模板生成 API Prompt...',
+        autoExtractComplete:
+            '自动提取完成：创建 {created} 个，跳过 {skipped} 个，失败 {failed} 个。',
+        generatedApiPrompts: ' 已为 {count} 个模板生成 API Prompt。',
+        autoExtractFailed: '自动提取失败：{message}',
+        refreshingTemplates: '正在从工作流批量刷新已有模板...',
+        batchRefreshComplete:
+            '批量刷新完成：刷新 {refreshed} 个，跳过 {skipped} 个，失败 {failed} 个。',
+        batchRefreshFailed: '批量刷新失败：{message}',
+        exportFailed: '导出失败：{message}',
+        inputsParameters: '输入（参数）：',
+        noInputsConfigured: '未配置输入',
+        outputs: '输出：',
+        noOutputsConfigured: '未配置输出',
+        createTemplateFromWorkflow: '从工作流创建模板',
+        workflow: '工作流：',
+        searchWorkflows: '搜索工作流...',
+        noMatchingWorkflows: '没有匹配的工作流',
+        noWorkflowsFound: '未找到工作流',
+        errorLoadingWorkflows: '加载工作流失败',
+        analyzingWorkflow: '正在分析工作流...',
+        description: '描述：',
+        autoDetectedInputs: '自动检测到的输入（{count}）：',
+        autoDetectedOutputs: '自动检测到的输出',
+        none: '无',
+        failedCreateTemplate: '创建模板失败：{message}',
+        mcpEndpoint: 'MCP 端点：{url}',
+        mcpNotReachable: '无法连接 MCP 服务',
+        statusSetting: 'MCP 服务状态',
+        templatesSetting: '模板',
+        statusCategory: '状态',
+        templatesCategory: '模板',
+        templatesTooltip: '从工作流创建和管理 MCP 模板',
+        nodeLabel: '节点',
+        defaultLabel: '默认值',
+        creating: '创建中...',
+    },
+};
+
+const I18N_NAMESPACE = 'comfyuiMcpServer';
+let comfyI18n = null;
+
+try {
+    const i18nModule = await import('../../../scripts/i18n.js');
+    if (i18nModule.i18n?.global?.mergeLocaleMessage) {
+        const comfyMessages = {
+            en: I18N.en,
+            'en-US': I18N.en,
+            zh: I18N.zh,
+            'zh-CN': I18N.zh,
+        };
+        for (const [language, messages] of Object.entries(comfyMessages)) {
+            i18nModule.i18n.global.mergeLocaleMessage(language, {
+                [I18N_NAMESPACE]: messages,
+            });
+        }
+        comfyI18n = i18nModule;
+    }
+} catch {
+    // Older ComfyUI builds do not expose the native i18n module to extensions.
+}
+
+function normalizeLocale(locale) {
+    return String(locale || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+let locale = normalizeLocale(navigator.language);
+
+try {
+    locale = normalizeLocale(await api.getSetting('Comfy.Locale'));
+} catch (e) {
+    console.warn('[MCP] Failed to read Comfy.Locale, using browser locale:', e);
+}
+
+function formatMessage(value, params = {}) {
+    return value.replace(/\{(\w+)\}/g, (_, name) =>
+        params[name] === undefined ? `{${name}}` : String(params[name]),
+    );
+}
+
+function t(key, params = {}) {
+    const value = I18N[locale]?.[key] ?? I18N.en[key] ?? key;
+    const comfyKey = `${I18N_NAMESPACE}.${key}`;
+    if (comfyI18n?.te?.(comfyKey)) {
+        return String(comfyI18n.t(comfyKey, params));
+    }
+    return formatMessage(value, params);
+}
+
+async function updateLocale() {
+    try {
+        const nextLocale = normalizeLocale(await api.getSetting('Comfy.Locale'));
+        if (nextLocale !== locale) {
+            locale = nextLocale;
+            return true;
+        }
+    } catch (e) {
+        console.warn('[MCP] Failed to refresh Comfy.Locale:', e);
+    }
+    return false;
+}
 
 function getApiBase() {
     const scriptUrl = import.meta.url;
@@ -16,8 +210,6 @@ function getApiBase() {
     if (jsIdx > 0) return `/${pathParts[jsIdx - 1]}/api`;
     return '/mcp-server/api';
 }
-console.log(app, '=============');
-
 const API = getApiBase();
 
 async function apiFetch(path, options = {}) {
@@ -88,49 +280,56 @@ async function downloadFile(path, filename) {
 // ── Styles ────────────────────────────────────────────────
 
 const S = {
-    row: 'display:flex;align-items:center;gap:8px;padding:4px 8px;border:1px solid #333;border-radius:4px;',
-    btn: 'padding:4px 12px;cursor:pointer;',
-    btnRow: 'display:flex;gap:8px;margin-top:4px;',
-    label: 'flex:1;font-size:13px;',
-    section: 'font-size:12px;color:#aaa;margin:8px 0 4px;font-weight:bold;',
+    row: 'display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid #333;border-radius:6px;background:#202020;min-width:0;flex-wrap:wrap;',
+    detailRow: 'display:flex;align-items:flex-start;gap:10px;padding:6px 8px;border:1px solid #333;border-radius:6px;background:#202020;margin:4px 0;',
+    btn: 'padding:5px 12px;min-height:28px;cursor:pointer;border-radius:4px;',
+    smallBtn: 'padding:3px 8px;min-height:24px;cursor:pointer;font-size:11px;border-radius:4px;white-space:nowrap;',
+    btnRow: 'display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;',
+    label: 'flex:1;min-width:0;font-size:13px;line-height:1.35;overflow-wrap:anywhere;',
+    section: 'font-size:12px;color:#aaa;margin:14px 0 6px;font-weight:bold;',
 };
 
 // ── Template management widget ────────────────────────────
 
 function createTemplateWidget() {
+    updateLocale().then((changed) => {
+        if (changed) refreshTexts();
+    });
+
     const container = document.createElement('div');
     container.style.cssText =
-        'display:flex;flex-direction:column;gap:8px;max-height:500px;overflow-y:auto;padding:4px 0;';
+        'display:flex;flex-direction:column;gap:10px;max-height:520px;overflow-y:auto;padding:6px 2px;';
 
     const listEl = document.createElement('div');
-    listEl.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+    listEl.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
     container.appendChild(listEl);
 
     const actionInfoEl = document.createElement('div');
-    actionInfoEl.style.cssText = 'font-size:12px;color:#888;min-height:18px;';
+    actionInfoEl.style.cssText =
+        'font-size:12px;color:#888;min-height:18px;line-height:1.4;';
     container.appendChild(actionInfoEl);
 
     const btnRow = document.createElement('div');
     btnRow.style.cssText = S.btnRow;
 
     const refreshBtn = document.createElement('button');
-    refreshBtn.textContent = 'Refresh';
+    refreshBtn.textContent = t('refresh');
     refreshBtn.style.cssText = S.btn;
 
     const createBtn = document.createElement('button');
-    createBtn.textContent = 'Create from Workflow';
+    createBtn.textContent = t('createFromWorkflow');
     createBtn.style.cssText = S.btn;
 
     const autoCreateBtn = document.createElement('button');
-    autoCreateBtn.textContent = 'Auto Extract Templates';
+    autoCreateBtn.textContent = t('autoExtractTemplates');
     autoCreateBtn.style.cssText = S.btn;
 
     const batchRefreshBtn = document.createElement('button');
-    batchRefreshBtn.textContent = 'Batch Refresh Templates';
+    batchRefreshBtn.textContent = t('batchRefreshTemplates');
     batchRefreshBtn.style.cssText = S.btn;
 
     const exportBtn = document.createElement('button');
-    exportBtn.textContent = 'Export Templates';
+    exportBtn.textContent = t('exportTemplates');
     exportBtn.style.cssText = S.btn;
 
     btnRow.append(
@@ -142,78 +341,104 @@ function createTemplateWidget() {
     );
     container.appendChild(btnRow);
 
+    function refreshTexts() {
+        refreshBtn.textContent = t('refresh');
+        createBtn.textContent = t('createFromWorkflow');
+        autoCreateBtn.textContent = t('autoExtractTemplates');
+        batchRefreshBtn.textContent = t('batchRefreshTemplates');
+        exportBtn.textContent = t('exportTemplates');
+        loadTemplates();
+    }
+
     function setActionInfo(text, isError = false) {
         actionInfoEl.textContent = text;
         actionInfoEl.style.color = isError ? '#f66' : '#888';
     }
 
     async function loadTemplates() {
-        listEl.innerHTML = 'Loading...';
+        listEl.innerHTML = t('loading');
         try {
             const data = await apiFetch('/templates?include_disabled=1');
             listEl.innerHTML = '';
             if (!data.templates?.length) {
-                listEl.innerHTML =
-                    '<div style="color:#888;font-size:12px;">No templates yet. Click "Create from Workflow" to create one.</div>';
+                listEl.innerHTML = `<div style="color:#888;font-size:12px;padding:8px 2px;">${t('noTemplates')}</div>`;
                 return;
             }
-            for (const t of data.templates) {
+            for (const template of data.templates) {
                 const row = document.createElement('div');
                 row.style.cssText = S.row;
 
+                const bodyEl = document.createElement('div');
+                bodyEl.style.cssText =
+                    'display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;';
+
                 const nameEl = document.createElement('span');
-                nameEl.textContent = t.name;
-                nameEl.style.cssText = `font-size:13px;font-weight:bold;${t.disabled ? 'color:#888;text-decoration:line-through;' : ''}`;
+                nameEl.textContent = template.name;
+                nameEl.style.cssText = `font-size:13px;font-weight:bold;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${template.disabled ? 'color:#888;text-decoration:line-through;' : ''}`;
+                nameEl.title = template.name;
+
+                const metaEl = document.createElement('div');
+                metaEl.style.cssText =
+                    'display:flex;align-items:center;gap:8px;min-width:0;';
 
                 const infoEl = document.createElement('span');
-                infoEl.textContent = `${t.input_count} in / ${t.output_count} out${t.disabled ? ' | disabled' : ''}`;
-                infoEl.style.cssText = `font-size:11px;color:${t.disabled ? '#b66' : '#888'};`;
+                infoEl.textContent = `${t('templateCounts', { inputs: template.input_count, outputs: template.output_count })}${template.disabled ? ` | ${t('disabled')}` : ''}`;
+                infoEl.style.cssText = `font-size:11px;color:${template.disabled ? '#b66' : '#888'};`;
 
                 const descEl = document.createElement('span');
-                descEl.textContent = t.description || '';
+                descEl.textContent = template.description || '';
                 descEl.style.cssText =
-                    'font-size:11px;color:#666;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-                descEl.title = t.description || '';
+                    'font-size:11px;color:#666;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                descEl.title = template.description || '';
+
+                metaEl.append(infoEl, descEl);
+                bodyEl.append(nameEl, metaEl);
+
+                const actionEl = document.createElement('div');
+                actionEl.style.cssText =
+                    'display:flex;align-items:center;justify-content:flex-end;gap:4px;flex-wrap:wrap;margin-left:auto;';
 
                 const viewBtn = document.createElement('button');
-                viewBtn.textContent = 'Details';
-                viewBtn.style.cssText =
-                    'padding:2px 8px;cursor:pointer;font-size:11px;';
+                viewBtn.textContent = t('details');
+                viewBtn.style.cssText = S.smallBtn;
                 viewBtn.addEventListener('click', () =>
-                    showTemplateDetail(t.name),
+                    showTemplateDetail(template.name),
                 );
 
                 const toggleBtn = document.createElement('button');
-                toggleBtn.textContent = t.disabled ? 'Enable' : 'Disable';
-                toggleBtn.style.cssText = `padding:2px 8px;cursor:pointer;font-size:11px;${t.disabled ? 'color:#6d6;' : 'color:#fb6;'}`;
+                toggleBtn.textContent = template.disabled
+                    ? t('enable')
+                    : t('disable');
+                toggleBtn.style.cssText = `${S.smallBtn}${template.disabled ? 'color:#6d6;' : 'color:#fb6;'}`;
                 toggleBtn.addEventListener('click', async () => {
                     toggleBtn.textContent = '...';
                     toggleBtn.disabled = true;
                     try {
-                        await apiFetch(`/templates/${t.name}`, {
+                        await apiFetch(`/templates/${template.name}`, {
                             method: 'PUT',
-                            body: JSON.stringify({ disabled: !t.disabled }),
+                            body: JSON.stringify({
+                                disabled: !template.disabled,
+                            }),
                         });
                         loadTemplates();
                     } catch (e) {
-                        alert(`Update failed: ${e.message}`);
-                        toggleBtn.textContent = t.disabled
-                            ? 'Enable'
-                            : 'Disable';
+                        alert(t('updateFailed', { message: e.message }));
+                        toggleBtn.textContent = template.disabled
+                            ? t('enable')
+                            : t('disable');
                         toggleBtn.disabled = false;
                     }
                 });
 
                 const refreshBtn = document.createElement('button');
-                refreshBtn.textContent = 'Refresh';
-                refreshBtn.style.cssText =
-                    'padding:2px 8px;cursor:pointer;font-size:11px;';
+                refreshBtn.textContent = t('refresh');
+                refreshBtn.style.cssText = S.smallBtn;
                 refreshBtn.addEventListener('click', async () => {
                     refreshBtn.textContent = '...';
                     refreshBtn.disabled = true;
                     try {
                         const wfContent = await apiFetch(
-                            `/workflows/${t.name}`,
+                            `/workflows/${template.name}`,
                         );
 
                         // Generate API prompt
@@ -228,7 +453,7 @@ function createTemplateWidget() {
                             method: 'POST',
                             body: JSON.stringify({ workflow: wfContent }),
                         });
-                        await apiFetch(`/templates/${t.name}`, {
+                        await apiFetch(`/templates/${template.name}`, {
                             method: 'PUT',
                             body: JSON.stringify({
                                 workflow: wfContent,
@@ -240,38 +465,30 @@ function createTemplateWidget() {
                         });
                         loadTemplates();
                     } catch (e) {
-                        alert(`Refresh failed: ${e.message}`);
-                        refreshBtn.textContent = 'Refresh';
+                        alert(t('refreshFailed', { message: e.message }));
+                        refreshBtn.textContent = t('refresh');
                         refreshBtn.disabled = false;
                     }
                 });
 
                 const delBtn = document.createElement('button');
-                delBtn.textContent = 'Delete';
-                delBtn.style.cssText =
-                    'padding:2px 8px;cursor:pointer;font-size:11px;color:#f66;';
+                delBtn.textContent = t('delete');
+                delBtn.style.cssText = `${S.smallBtn}color:#f66;`;
                 delBtn.addEventListener('click', async () => {
-                    if (confirm(`Delete template "${t.name}"?`)) {
-                        await apiFetch(`/templates/${t.name}`, {
+                    if (confirm(t('deleteConfirm', { name: template.name }))) {
+                        await apiFetch(`/templates/${template.name}`, {
                             method: 'DELETE',
                         });
                         loadTemplates();
                     }
                 });
 
-                row.append(
-                    nameEl,
-                    infoEl,
-                    descEl,
-                    viewBtn,
-                    refreshBtn,
-                    toggleBtn,
-                    delBtn,
-                );
+                actionEl.append(viewBtn, refreshBtn, toggleBtn, delBtn);
+                row.append(bodyEl, actionEl);
                 listEl.appendChild(row);
             }
         } catch (e) {
-            listEl.innerHTML = `<div style="color:#f66;font-size:12px;">Error: ${e.message}</div>`;
+            listEl.innerHTML = `<div style="color:#f66;font-size:12px;">${t('error', { message: e.message })}</div>`;
         }
     }
 
@@ -281,8 +498,8 @@ function createTemplateWidget() {
     );
     autoCreateBtn.addEventListener('click', async () => {
         autoCreateBtn.disabled = true;
-        autoCreateBtn.textContent = 'Working...';
-        setActionInfo('Scanning workflows and creating missing templates...');
+        autoCreateBtn.textContent = t('working');
+        setActionInfo(t('scanningWorkflows'));
         try {
             const result = await apiFetch('/templates/auto-create', {
                 method: 'POST',
@@ -295,7 +512,11 @@ function createTemplateWidget() {
             // Generate api_prompt for newly created templates
             let apiPromptGenerated = 0;
             if (needsApiPrompt.length > 0) {
-                setActionInfo(`Generating API prompts for ${needsApiPrompt.length} templates...`);
+                setActionInfo(
+                    t('generatingApiPrompts', {
+                        count: needsApiPrompt.length,
+                    }),
+                );
                 for (const name of needsApiPrompt) {
                     try {
                         const wfContent = await apiFetch(`/workflows/${name}`);
@@ -311,21 +532,29 @@ function createTemplateWidget() {
                 }
             }
 
-            const msg = `Auto extract complete: ${created} created, ${skipped} skipped, ${failed} failed.` +
-                (apiPromptGenerated > 0 ? ` Generated API prompts for ${apiPromptGenerated} templates.` : '');
+            const msg =
+                t('autoExtractComplete', { created, skipped, failed }) +
+                (apiPromptGenerated > 0
+                    ? t('generatedApiPrompts', {
+                          count: apiPromptGenerated,
+                      })
+                    : '');
             setActionInfo(msg, failed > 0);
             await loadTemplates();
         } catch (e) {
-            setActionInfo(`Auto extract failed: ${e.message}`, true);
+            setActionInfo(
+                t('autoExtractFailed', { message: e.message }),
+                true,
+            );
         } finally {
             autoCreateBtn.disabled = false;
-            autoCreateBtn.textContent = 'Auto Extract Templates';
+            autoCreateBtn.textContent = t('autoExtractTemplates');
         }
     });
     batchRefreshBtn.addEventListener('click', async () => {
         batchRefreshBtn.disabled = true;
-        batchRefreshBtn.textContent = 'Working...';
-        setActionInfo('Refreshing all existing templates from workflows...');
+        batchRefreshBtn.textContent = t('working');
+        setActionInfo(t('refreshingTemplates'));
         try {
             const result = await apiFetch('/templates/batch-refresh', {
                 method: 'POST',
@@ -338,7 +567,11 @@ function createTemplateWidget() {
             // Generate api_prompt for templates that need it
             let apiPromptGenerated = 0;
             if (needsApiPrompt.length > 0) {
-                setActionInfo(`Generating API prompts for ${needsApiPrompt.length} templates...`);
+                setActionInfo(
+                    t('generatingApiPrompts', {
+                        count: needsApiPrompt.length,
+                    }),
+                );
                 for (const name of needsApiPrompt) {
                     try {
                         const wfContent = await apiFetch(`/workflows/${name}`);
@@ -354,26 +587,34 @@ function createTemplateWidget() {
                 }
             }
 
-            const msg = `Batch refresh complete: ${refreshed} refreshed, ${skipped} skipped, ${failed} failed.` +
-                (apiPromptGenerated > 0 ? ` Generated API prompts for ${apiPromptGenerated} templates.` : '');
+            const msg =
+                t('batchRefreshComplete', { refreshed, skipped, failed }) +
+                (apiPromptGenerated > 0
+                    ? t('generatedApiPrompts', {
+                          count: apiPromptGenerated,
+                      })
+                    : '');
             setActionInfo(msg, failed > 0);
             await loadTemplates();
         } catch (e) {
-            setActionInfo(`Batch refresh failed: ${e.message}`, true);
+            setActionInfo(
+                t('batchRefreshFailed', { message: e.message }),
+                true,
+            );
         } finally {
             batchRefreshBtn.disabled = false;
-            batchRefreshBtn.textContent = 'Batch Refresh Templates';
+            batchRefreshBtn.textContent = t('batchRefreshTemplates');
         }
     });
     exportBtn.addEventListener('click', async () => {
-        exportBtn.textContent = 'Exporting...';
+        exportBtn.textContent = t('exporting');
         exportBtn.disabled = true;
         try {
             await downloadFile('/templates/export', 'mcp-templates.zip');
         } catch (e) {
-            alert(`Export failed: ${e.message}`);
+            alert(t('exportFailed', { message: e.message }));
         } finally {
-            exportBtn.textContent = 'Export Templates';
+            exportBtn.textContent = t('exportTemplates');
             exportBtn.disabled = false;
         }
     });
@@ -390,43 +631,41 @@ async function showTemplateDetail(name) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText =
-        'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+        'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;';
 
     const modal = document.createElement('div');
     modal.style.cssText =
-        'background:#1e1e1e;border:1px solid #444;border-radius:8px;padding:16px;min-width:500px;max-width:700px;max-height:80vh;overflow-y:auto;color:#ddd;';
+        'background:#1e1e1e;border:1px solid #444;border-radius:8px;padding:18px;width:min(720px,100%);max-height:calc(100vh - 48px);overflow-y:auto;color:#ddd;box-sizing:border-box;';
 
-    let html = `<h3 style="margin:0 0 8px;">${template.name}</h3>`;
+    let html = `<h3 style="margin:0 0 8px;font-size:16px;line-height:1.35;overflow-wrap:anywhere;">${template.name}</h3>`;
     if (template.description)
-        html += `<p style="color:#aaa;font-size:12px;margin:0 0 12px;">${template.description}</p>`;
+        html += `<p style="color:#aaa;font-size:12px;line-height:1.45;margin:0 0 14px;overflow-wrap:anywhere;">${template.description}</p>`;
 
-    html += `<div style="${S.section}">Inputs (parameters):</div>`;
+    html += `<div style="${S.section}">${t('inputsParameters')}</div>`;
     const inputs = template.inputs || {};
     if (Object.keys(inputs).length) {
         for (const [k, v] of Object.entries(inputs)) {
             const def =
                 v.default !== undefined
-                    ? ` | default: ${JSON.stringify(v.default)}`
+                    ? ` | ${t('defaultLabel')}: ${JSON.stringify(v.default)}`
                     : '';
-            html += `<div style="${S.row}margin:2px 0;"><span style="${S.label}">${k}</span><span style="font-size:11px;color:#888;">${v.type} | node ${v.node_id} → ${v.widget}${def}</span></div>`;
+            html += `<div style="${S.detailRow}"><span style="${S.label}">${k}</span><span style="font-size:11px;color:#888;line-height:1.4;text-align:right;overflow-wrap:anywhere;">${v.type} | ${t('nodeLabel')} ${v.node_id} → ${v.widget}${def}</span></div>`;
         }
     } else {
-        html +=
-            '<div style="color:#888;font-size:12px;">No inputs configured</div>';
+        html += `<div style="color:#888;font-size:12px;">${t('noInputsConfigured')}</div>`;
     }
 
-    html += `<div style="${S.section}">Outputs:</div>`;
+    html += `<div style="${S.section}">${t('outputs')}</div>`;
     const outputs = template.outputs || {};
     if (Object.keys(outputs).length) {
         for (const [k, v] of Object.entries(outputs)) {
-            html += `<div style="${S.row}margin:2px 0;"><span style="${S.label}">${k}</span><span style="font-size:11px;color:#888;">${v.comfy_type || v.type} | node ${v.node_id}</span></div>`;
+            html += `<div style="${S.detailRow}"><span style="${S.label}">${k}</span><span style="font-size:11px;color:#888;line-height:1.4;text-align:right;overflow-wrap:anywhere;">${v.comfy_type || v.type} | ${t('nodeLabel')} ${v.node_id}</span></div>`;
         }
     } else {
-        html +=
-            '<div style="color:#888;font-size:12px;">No outputs configured</div>';
+        html += `<div style="color:#888;font-size:12px;">${t('noOutputsConfigured')}</div>`;
     }
 
-    html += `<div style="display:flex;gap:8px;margin-top:12px;"><button id="mcp-close" style="${S.btn}">Close</button></div>`;
+    html += `<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;"><button id="mcp-close" style="${S.btn}">${t('close')}</button></div>`;
 
     modal.innerHTML = html;
     overlay.appendChild(modal);
@@ -445,28 +684,28 @@ async function showTemplateDetail(name) {
 async function showCreateTemplateDialog(onDone) {
     const overlay = document.createElement('div');
     overlay.style.cssText =
-        'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+        'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;';
 
     const modal = document.createElement('div');
     modal.style.cssText =
-        'background:#1e1e1e;border:1px solid #444;border-radius:8px;padding:16px;min-width:500px;max-width:700px;max-height:80vh;overflow-y:auto;color:#ddd;';
+        'background:#1e1e1e;border:1px solid #444;border-radius:8px;padding:18px;width:min(680px,100%);max-height:calc(100vh - 48px);overflow-y:auto;color:#ddd;box-sizing:border-box;';
 
     modal.innerHTML = `
-        <h3 style="margin:0 0 12px;">Create Template from Workflow</h3>
-        <div style="margin-bottom:8px;">
-            <label style="font-size:12px;color:#aaa;">Workflow:</label>
-            <div style="display:flex;gap:8px;margin-top:4px;position:relative;">
+        <h3 style="margin:0 0 14px;font-size:16px;line-height:1.35;">${t('createTemplateFromWorkflow')}</h3>
+        <div style="margin-bottom:10px;">
+            <label style="display:block;font-size:12px;color:#aaa;margin-bottom:5px;">${t('workflow')}</label>
+            <div style="display:flex;gap:8px;align-items:center;position:relative;">
                 <div style="flex:1;position:relative;">
-                    <input id="mcp-wf-search" type="text" placeholder="Search workflows..." style="width:100%;padding:4px 8px;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:4px;box-sizing:border-box;" autocomplete="off" />
+                    <input id="mcp-wf-search" type="text" placeholder="${t('searchWorkflows')}" style="width:100%;min-height:30px;padding:5px 9px;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:4px;box-sizing:border-box;" autocomplete="off" />
                     <div id="mcp-wf-dropdown" style="display:none;position:fixed;max-height:240px;overflow-y:auto;background:#2a2a2a;border:1px solid #444;border-radius:4px;z-index:10001;margin-top:2px;"></div>
                 </div>
-                <button id="mcp-wf-refresh" style="${S.btn}font-size:11px;">Refresh</button>
+                <button id="mcp-wf-refresh" style="${S.btn}font-size:11px;">${t('refresh')}</button>
             </div>
         </div>
-        <div id="mcp-preview" style="margin:8px 0;font-size:12px;color:#aaa;"></div>
-        <div style="display:flex;gap:8px;margin-top:12px;">
-            <button id="mcp-save" style="${S.btn}background:#2d5a2d;color:#8f8;" disabled>Create Template</button>
-            <button id="mcp-cancel" style="${S.btn}">Cancel</button>
+        <div id="mcp-preview" style="margin:10px 0 0;font-size:12px;color:#aaa;line-height:1.45;min-height:36px;padding:8px;border:1px solid #333;border-radius:6px;background:#202020;box-sizing:border-box;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button id="mcp-save" style="${S.btn}background:#2d5a2d;color:#8f8;" disabled>${t('createTemplate')}</button>
+            <button id="mcp-cancel" style="${S.btn}">${t('cancel')}</button>
         </div>
     `;
 
@@ -492,8 +731,7 @@ async function showCreateTemplateDialog(onDone) {
             : allWorkflows;
 
         if (!matched.length) {
-            dropdown.innerHTML =
-                '<div style="padding:6px 8px;color:#888;font-size:12px;">No matching workflows</div>';
+            dropdown.innerHTML = `<div style="padding:6px 8px;color:#888;font-size:12px;">${t('noMatchingWorkflows')}</div>`;
             dropdown.style.display = 'block';
             return;
         }
@@ -502,7 +740,7 @@ async function showCreateTemplateDialog(onDone) {
             const item = document.createElement('div');
             item.textContent = w.name;
             item.style.cssText =
-                'padding:6px 8px;cursor:pointer;font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                'padding:7px 9px;cursor:pointer;font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
             item.title = w.name;
             if (w.name === selectedWorkflow) {
                 item.style.background = '#3a5a3a';
@@ -548,18 +786,18 @@ async function showCreateTemplateDialog(onDone) {
 
     async function loadWorkflows() {
         searchInput.value = '';
-        searchInput.placeholder = 'Loading...';
+        searchInput.placeholder = t('loading');
         searchInput.disabled = true;
         selectedWorkflow = '';
         try {
             const wfData = await apiFetch('/workflows');
             allWorkflows = wfData.workflows || [];
             searchInput.placeholder = allWorkflows.length
-                ? 'Search workflows...'
-                : 'No workflows found';
+                ? t('searchWorkflows')
+                : t('noWorkflowsFound');
         } catch (e) {
             allWorkflows = [];
-            searchInput.placeholder = 'Error loading workflows';
+            searchInput.placeholder = t('errorLoadingWorkflows');
         }
         searchInput.disabled = false;
     }
@@ -572,7 +810,7 @@ async function showCreateTemplateDialog(onDone) {
             saveBtn.disabled = true;
             return;
         }
-        preview.innerHTML = 'Analyzing workflow...';
+        preview.innerHTML = t('analyzingWorkflow');
         try {
             const wfContent = await apiFetch(`/workflows/${name}`);
             const info = await apiFetch('/templates/extract', {
@@ -583,23 +821,23 @@ async function showCreateTemplateDialog(onDone) {
 
             let html = '';
             if (info.description)
-                html += `<div style="margin-bottom:4px;"><b>Description:</b> ${info.description}</div>`;
+                html += `<div style="margin-bottom:4px;"><b>${t('description')}</b> ${info.description}</div>`;
             const inputKeys = Object.keys(info.inputs || {});
-            html += `<div><b>Auto-detected inputs (${inputKeys.length}):</b> ${inputKeys.join(', ') || 'none'}</div>`;
+            html += `<div><b>${t('autoDetectedInputs', { count: inputKeys.length })}</b> ${inputKeys.join(', ') || t('none')}</div>`;
             const outputEntries = Object.entries(info.outputs || {});
             if (outputEntries.length) {
-                html += `<div><b>Auto-detected outputs (${outputEntries.length}):</b></div>`;
+                html += `<div><b>${t('autoDetectedOutputs')} (${outputEntries.length}):</b></div>`;
                 for (const [oname, def] of outputEntries) {
                     html += `<div style="padding-left:12px;color:#8f8;">${oname} <span style="color:#888;">(${def.comfy_type || def.type})</span></div>`;
                 }
             } else {
-                html += `<div><b>Auto-detected outputs:</b> none</div>`;
+                html += `<div><b>${t('autoDetectedOutputs')}:</b> ${t('none')}</div>`;
             }
             preview.innerHTML = html;
 
             saveBtn.disabled = false;
         } catch (e) {
-            preview.innerHTML = `<span style="color:#f66;">Error: ${e.message}</span>`;
+            preview.innerHTML = `<span style="color:#f66;">${t('error', { message: e.message })}</span>`;
         }
     }
 
@@ -608,7 +846,7 @@ async function showCreateTemplateDialog(onDone) {
         if (!wfName) return;
 
         saveBtn.disabled = true;
-        saveBtn.textContent = 'Creating...';
+        saveBtn.textContent = t('creating');
 
         try {
             const wfContent = await apiFetch(`/workflows/${wfName}`);
@@ -633,9 +871,9 @@ async function showCreateTemplateDialog(onDone) {
             overlay.remove();
             if (onDone) onDone();
         } catch (e) {
-            alert(`Failed to create template: ${e.message}`);
+            alert(t('failedCreateTemplate', { message: e.message }));
             saveBtn.disabled = false;
-            saveBtn.textContent = 'Create Template';
+            saveBtn.textContent = t('createTemplate');
         }
     });
 
@@ -656,26 +894,28 @@ app.registerExtension({
     settings: [
         {
             id: 'MCPServer.Status',
-            name: 'MCP Server Status',
-            category: ['MCP Server', 'Status'],
+            name: t('statusSetting'),
+            category: ['MCP Server', t('statusCategory')],
             type: () => {
                 const el = document.createElement('div');
                 el.style.cssText = 'font-size:12px;color:#aaa;padding:4px 0;';
                 apiFetch('/status')
                     .then((d) => {
-                        el.textContent = `MCP endpoint: ${d.mcp_url}`;
+                        el.textContent = t('mcpEndpoint', {
+                            url: d.mcp_url,
+                        });
                     })
                     .catch(() => {
-                        el.textContent = 'MCP server not reachable';
+                        el.textContent = t('mcpNotReachable');
                     });
                 return el;
             },
         },
         {
             id: 'MCPServer.Templates',
-            name: 'Templates',
-            category: ['MCP Server', 'Templates'],
-            tooltip: 'Create and manage MCP templates from workflows',
+            name: t('templatesSetting'),
+            category: ['MCP Server', t('templatesCategory')],
+            tooltip: t('templatesTooltip'),
             type: () => createTemplateWidget(),
         },
     ],
