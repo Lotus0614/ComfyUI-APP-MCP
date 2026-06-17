@@ -378,16 +378,17 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @mcp.tool()
-    async def get_template_result(name: str, prompt_id: str, wait: bool = False, timeout: float = 300) -> str:
+    async def get_template_result(name: str, prompt_id: str, wait: bool = False, timeout: float | None = None) -> str:
         """Fetch template execution result.
 
         Args:
             name: Template name.
             prompt_id: The prompt_id returned by run_template.
             wait: If true, poll until the execution completes or times out.
-            timeout: Max seconds to wait when wait=true.
+            timeout: Max seconds to wait when wait=true. Defaults to the Run Template Timeout setting.
         """
-        logger.info(f"[MCP] get_template_result(name={name!r}, prompt_id={prompt_id!r}, wait={wait})")
+        effective_timeout = timeout if timeout is not None else config.get_run_template_timeout()
+        logger.info(f"[MCP] get_template_result(name={name!r}, prompt_id={prompt_id!r}, wait={wait}, timeout={effective_timeout})")
         try:
             template = template_manager.get_template(name)
             if not template:
@@ -399,7 +400,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                 prompt_id,
                 outputs,
                 wait=wait,
-                timeout=timeout,
+                timeout=effective_timeout,
                 template_name=name,
             )
             logger.info(f"[MCP] get_template_result → {result.get('status', 'unknown')}")

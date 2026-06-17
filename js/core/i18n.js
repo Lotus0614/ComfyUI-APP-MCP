@@ -68,9 +68,8 @@ const I18N = {
         creating: 'Creating...',
         runTemplateTimeoutSetting: 'Run Template Timeout',
         runTemplateTimeoutTooltip:
-            'Default wait timeout in seconds for run_template when wait=true',
+            'Default wait timeout in seconds when wait=true (applies to run_template and get_template_result)',
         timeoutCategory: 'Execution',
-        timeoutSaveFailed: 'Failed to save run template timeout: {message}',
     },
     zh: {
         refresh: '刷新',
@@ -132,11 +131,10 @@ const I18N = {
         nodeLabel: '节点',
         defaultLabel: '默认值',
         creating: '创建中...',
-        runTemplateTimeoutSetting: 'Run Template Timeout',
+        runTemplateTimeoutSetting: '模板运行超时',
         runTemplateTimeoutTooltip:
-            'run_template 在 wait=true 时的默认等待超时秒数',
+            'wait=true 时的默认等待超时秒数（适用于 run_template 和 get_template_result）',
         timeoutCategory: '执行',
-        timeoutSaveFailed: '保存 Run Template Timeout 失败：{message}',
     },
 };
 
