@@ -12,10 +12,12 @@ DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188"
 DEFAULT_TEMPLATE_DIR = BASE_DIR / "templates"
 DEFAULT_MCP_HOST = "0.0.0.0"
 DEFAULT_MCP_PORT = 8189
+DEFAULT_RUN_TEMPLATE_TIMEOUT = 120
 
 _config_path_override: Path | None = None
 _loaded_config: dict[str, Any] | None = None
 _loaded_config_dir: Path | None = None
+_runtime_run_template_timeout: float | None = None
 
 
 def configure(config_path: str | os.PathLike[str] | None = None) -> None:
@@ -118,3 +120,23 @@ def get_mcp_port() -> int:
     mcp = _section("mcp")
     value = os.environ.get("MCP_PORT") or mcp.get("port") or DEFAULT_MCP_PORT
     return int(value)
+
+
+def get_run_template_timeout() -> float:
+    """Default wait timeout for run_template when wait=true."""
+    if _runtime_run_template_timeout is not None:
+        return _runtime_run_template_timeout
+    mcp = _section("mcp")
+    value = (
+        os.environ.get("MCP_RUN_TEMPLATE_TIMEOUT")
+        or mcp.get("runTemplateTimeout")
+        or DEFAULT_RUN_TEMPLATE_TIMEOUT
+    )
+    return float(value)
+
+
+def set_run_template_timeout(value: float) -> float:
+    """Override run_template timeout at runtime."""
+    global _runtime_run_template_timeout
+    _runtime_run_template_timeout = float(value)
+    return _runtime_run_template_timeout

@@ -29,7 +29,7 @@ _TRANSPORT_SECURITY = TransportSecuritySettings(
 
 def _format_template_result(result: dict) -> str:
     """Format template execution result for MCP response."""
-    if result.get("error"):
+    if result.get("error") and result.get("status") != "timeout":
         return json.dumps(result, ensure_ascii=False)
 
     outputs = result.get("outputs", {})
@@ -61,6 +61,13 @@ def _format_template_result(result: dict) -> str:
         "prompt_id": prompt_id,
         "outputs": outputs,
     }
+
+    if result.get("template"):
+        payload["template"] = result["template"]
+    if result.get("error"):
+        payload["error"] = result["error"]
+    if result.get("continue_hint"):
+        payload["continue_hint"] = result["continue_hint"]
 
     if binding_hint:
         payload["binding_hint"] = binding_hint
@@ -243,7 +250,12 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         return await client.upload_image_bytes(filename, image_bytes, overwrite=overwrite)
 
     @mcp.tool()
-    async def run_template(name: str, params: str, wait: bool = True, bindings: str = "{}") -> str:
+    async def run_template(
+        name: str,
+        params: str,
+        wait: bool = True,
+        bindings: str = "{}",
+    ) -> str:
         """Execute a template with the given parameters.
 
         Args:
@@ -267,7 +279,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                 - media_filename: pass the source media filename directly
                 - media_url: pass the source media URL directly
         """
-        logger.info(f"[MCP] run_template(name={name!r}, params={params}, wait={wait})")
+        effective_timeout = config.get_run_template_timeout()
+        logger.info(
+            f"[MCP] run_template(name={name!r}, params={params}, wait={wait}, timeout={effective_timeout})"
+        )
         try:
             parameters = json.loads(params)
         except json.JSONDecodeError as e:
@@ -279,7 +294,13 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             logger.error(f"[MCP] run_template → invalid bindings JSON: {e}")
             return json.dumps({"error": f"Invalid bindings JSON: {e}"})
         try:
-            result = await template_manager.execute_template(name, parameters, wait=wait, bindings=binding_data)
+            result = await template_manager.execute_template(
+                name,
+                parameters,
+                wait=wait,
+                timeout=effective_timeout,
+                bindings=binding_data,
+            )
             logger.info(f"[MCP] run_template → {result.get('status', 'unknown')}")
             return _format_template_result(result)
         except Exception as e:
@@ -351,7 +372,13 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             if template_manager.is_template_disabled(template):
                 return json.dumps({"error": f"Template '{name}' is disabled"})
             outputs = template.get("outputs", {})
-            result = await template_manager.get_template_outputs(prompt_id, outputs, wait=wait, timeout=timeout)
+            result = await template_manager.get_template_outputs(
+                prompt_id,
+                outputs,
+                wait=wait,
+                timeout=timeout,
+                template_name=name,
+            )
             logger.info(f"[MCP] get_template_result → {result.get('status', 'unknown')}")
             return _format_template_result(result)
         except Exception as e:
