@@ -6,7 +6,8 @@
     "mcp": {
         "host": "0.0.0.0",
         "port": 8190,
-        "mediaProxy": true
+        "mediaProxy": true,
+        "runTemplateTimeout": 120
     },
     "templates": {
         "dir": "./templates"

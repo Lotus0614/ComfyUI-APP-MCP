@@ -40,6 +40,27 @@ _UI_ONLY_TYPES = {
 _node_defs_cache: dict | None = None
 
 
+def _build_timeout_result(
+    prompt_id: str,
+    timeout: float,
+    *,
+    template_name: str | None = None,
+) -> dict:
+    result = {
+        "status": "timeout",
+        "error": f"Timed out after {timeout}s",
+        "prompt_id": prompt_id,
+        "outputs": {},
+        "continue_hint": (
+            "Use get_template_result(name, prompt_id, wait=true) "
+            "to continue waiting for the same prompt."
+        ),
+    }
+    if template_name:
+        result["template"] = template_name
+    return result
+
+
 def _comfyui_client() -> ComfyUIClient:
     return ComfyUIClient(
         base_url=config.get_comfyui_api_url(),
@@ -770,7 +791,13 @@ def _is_widget_input(spec) -> bool:
     return False
 
 
-async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dict:
+async def _wait_for_result(
+    prompt_id: str,
+    outputs: dict,
+    timeout: float,
+    *,
+    template_name: str | None = None,
+) -> dict:
     """Poll /history until the prompt completes or times out."""
     interval = 1.0  # poll interval in seconds
     elapsed = 0.0
@@ -808,7 +835,11 @@ async def _wait_for_result(prompt_id: str, outputs: dict, timeout: float) -> dic
             logger.warning(f"Poll error: {e}")
         await asyncio.sleep(interval)
         elapsed += interval
-    return {"error": f"Timed out after {timeout}s", "prompt_id": prompt_id}
+    return _build_timeout_result(
+        prompt_id,
+        timeout,
+        template_name=template_name,
+    )
 
 
 def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
@@ -925,7 +956,13 @@ def _inject_widget_values(api_prompt_data: dict, inputs: dict, params: dict) -> 
     return api_prompt
 
 
-async def execute_template(name: str, params: dict, wait: bool = True, timeout: float = 300, bindings: dict | None = None) -> dict:
+async def execute_template(
+    name: str,
+    params: dict,
+    wait: bool = True,
+    timeout: float = 300,
+    bindings: dict | None = None,
+) -> dict:
     """Execute a template with given parameters.
 
     Args:
@@ -991,18 +1028,35 @@ async def execute_template(name: str, params: dict, wait: bool = True, timeout: 
         }
 
     # Poll for completion
-    result = await _wait_for_result(prompt_id, outputs, timeout)
+    result = await _wait_for_result(
+        prompt_id,
+        outputs,
+        timeout,
+        template_name=name,
+    )
     logger.info(f"[Template] Execution completed: {result.get('status', 'unknown')}")
     return result
 
 
-async def get_template_outputs(prompt_id: str, outputs: dict, wait: bool = False, timeout: float = 300) -> dict:
+async def get_template_outputs(
+    prompt_id: str,
+    outputs: dict,
+    wait: bool = False,
+    timeout: float = 300,
+    *,
+    template_name: str | None = None,
+) -> dict:
     """Fetch execution results and extract output values.
 
     If wait is True, poll until completion or timeout.
     """
     if wait:
-        return await _wait_for_result(prompt_id, outputs, timeout)
+        return await _wait_for_result(
+            prompt_id,
+            outputs,
+            timeout,
+            template_name=template_name,
+        )
 
     history = await _comfyui_client().get_history(prompt_id)
 

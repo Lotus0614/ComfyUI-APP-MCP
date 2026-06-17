@@ -16,6 +16,18 @@ logger = logging.getLogger(__name__)
 API_PREFIX = "/mcp-server/api"
 
 
+def _setting_getters() -> dict[str, callable]:
+    return {
+        "run_template_timeout": config.get_run_template_timeout,
+    }
+
+
+def _setting_setters() -> dict[str, callable]:
+    return {
+        "run_template_timeout": config.set_run_template_timeout,
+    }
+
+
 def _comfyui_client() -> ComfyUIClient:
     return ComfyUIClient(
         base_url=config.get_comfyui_api_url(),
@@ -26,9 +38,47 @@ def _comfyui_client() -> ComfyUIClient:
 @PromptServer.instance.routes.get(f"{API_PREFIX}/status")
 async def mcp_status(request):
     """Return MCP server status and endpoint URL."""
+    getters = _setting_getters()
     return web.json_response({
         "mcp_url": "http://127.0.0.1:8188/app-mcp",
+        **{key: getter() for key, getter in getters.items()},
     })
+
+
+@PromptServer.instance.routes.get(f"{API_PREFIX}/settings/{{key}}")
+async def get_runtime_setting(request):
+    """Read a runtime setting value."""
+    key = request.match_info["key"]
+    getter = _setting_getters().get(key)
+    if getter is None:
+        return web.json_response({"error": f"Unknown setting: {key}"}, status=404)
+    return web.json_response({"key": key, "value": getter()})
+
+
+@PromptServer.instance.routes.post(f"{API_PREFIX}/settings/{{key}}")
+async def set_runtime_setting(request):
+    """Update a runtime setting from frontend settings."""
+    key = request.match_info["key"]
+    setter = _setting_setters().get(key)
+    if setter is None:
+        return web.json_response({"error": f"Unknown setting: {key}"}, status=404)
+
+    try:
+        data = await request.json()
+    except Exception as e:
+        return web.json_response({"error": f"Invalid JSON: {e}"}, status=400)
+
+    raw_value = data.get("value")
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "value must be a number"}, status=400)
+
+    if value <= 0:
+        return web.json_response({"error": "value must be greater than 0"}, status=400)
+
+    updated = setter(value)
+    return web.json_response({"key": key, "value": updated})
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/workflows")

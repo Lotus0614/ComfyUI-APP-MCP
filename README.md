@@ -199,6 +199,8 @@ AI 助手通过 MCP 协议使用以下工具：
 - `wait`：是否等待执行完成（默认 `true`）。等待完成后直接返回格式化结果
 - `bindings`：可选 JSON 字符串，用于从历史结果中取值并自动填入当前模板参数
 
+当 `wait=true` 时，默认等待超时由 ComfyUI 前端设置项 **Settings → MCP Server → Execution → Run Template Timeout** 控制，默认 `120` 秒。
+
 已禁用的模板不可运行，调用会返回错误。
 
 ##### 输出格式
@@ -234,6 +236,19 @@ AI 助手通过 MCP 协议使用以下工具：
             "index": 0
         }
     }
+}
+```
+
+如果等待超时，会返回：
+
+```json
+{
+  "status": "timeout",
+  "prompt_id": "abc-123",
+  "template": "anima mcp.app",
+  "outputs": {},
+  "error": "Timed out after 120s",
+  "continue_hint": "Use get_template_result(name, prompt_id, wait=true) to continue waiting for the same prompt."
 }
 ```
 
@@ -337,6 +352,7 @@ result2 = run_template("图片加密.app", '{}', bindings='{"image": {"from": "a
 在 **Settings → MCP Server** 中：
 
 - **Status**：查看 MCP 服务状态和连接地址
+- **Execution → Run Template Timeout**：设置 `run_template(wait=true)` 的默认等待超时，默认 `120` 秒；超时后可用 `get_template_result(name, prompt_id, wait=true)` 继续等待
 - **Templates**：查看、刷新、禁用/启用、删除模板
 - **Auto Extract Templates**：扫描所有工作流，自动为包含 `title` Markdown 节点且尚未存在模板的工作流创建模板
 - **Batch Refresh Templates**：对当前所有模板执行批量刷新，从同名工作流重新提取输入、输出、标题和描述

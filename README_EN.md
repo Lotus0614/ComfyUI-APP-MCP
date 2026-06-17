@@ -134,6 +134,8 @@ Executes a template with parameter values.
 - `wait`: whether to wait for completion, defaults to `true`
 - `bindings`: optional JSON string used to pull values from a previous result and inject them into current parameters
 
+When `wait=true`, the default wait timeout is controlled by **Settings → MCP Server → Execution → Run Template Timeout** in the ComfyUI frontend. The default is `120` seconds.
+
 Disabled templates cannot be run.
 
 ##### Output Format
@@ -169,6 +171,19 @@ On success, returns a clean structured result:
       "index": 0
     }
   }
+}
+```
+
+If waiting times out, the result looks like:
+
+```json
+{
+  "status": "timeout",
+  "prompt_id": "abc-123",
+  "template": "anima mcp.app",
+  "outputs": {},
+  "error": "Timed out after 120s",
+  "continue_hint": "Use get_template_result(name, prompt_id, wait=true) to continue waiting for the same prompt."
 }
 ```
 
@@ -272,6 +287,7 @@ Fetches execution results.
 In **Settings → MCP Server**:
 
 - **Status**: view MCP server status and connection address
+- **Execution → Run Template Timeout**: set the default wait timeout for `run_template(wait=true)`, default `120` seconds; after timeout, call `get_template_result(name, prompt_id, wait=true)` to continue waiting
 - **Templates**: view, refresh, disable or enable, and delete templates
 - **Auto Extract Templates**: scan all workflows and auto-create templates for those with a `title` Markdown node that don't have a template yet
 - **Batch Refresh Templates**: refresh all templates from their source workflows, re-extracting inputs, outputs, title, and description
