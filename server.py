@@ -157,6 +157,29 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @mcp.tool()
+    async def update_template_doc(name: str, title: str, content: str, mode: str = "replace") -> str:
+        """Update a documentation section in a template.
+
+        Updates the MarkdownNote node in the original workflow and syncs the
+        top-level template fields (title/description) when applicable.
+
+        Args:
+            name: Template name.
+            title: Documentation section title (e.g. "description", "usage", "tips").
+            content: Markdown content to write.
+            mode: "replace" to overwrite entirely, "append" to add to the end.
+        """
+        logger.info(f"[MCP] update_template_doc(name={name!r}, title={title!r}, mode={mode!r})")
+        try:
+            result = template_manager.update_template_doc(name, title, content, mode)
+            if result.get("error"):
+                logger.warning(f"[MCP] update_template_doc → {result['error']}")
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"[MCP] update_template_doc error: {e}")
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    @mcp.tool()
     async def upload_image(source: str, overwrite: bool = True) -> str:
         """Upload an image to ComfyUI. Supports local file path, HTTP URL, or base64 data.
 

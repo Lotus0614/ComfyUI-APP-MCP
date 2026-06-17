@@ -72,6 +72,50 @@ def _extract_markdown_note(workflow: dict, note_title: str) -> str | None:
     return None
 
 
+def _upsert_markdown_note(workflow: dict, note_title: str, content: str, mode: str = "replace") -> dict:
+    """Update or insert a MarkdownNote node in the workflow.
+
+    Args:
+        workflow: The workflow dict (will be mutated).
+        note_title: Title of the MarkdownNote node.
+        content: Markdown content to write.
+        mode: "replace" to overwrite, "append" to add to existing content.
+
+    Returns:
+        The mutated workflow dict.
+    """
+    nodes = workflow.get("nodes", [])
+    for node in nodes:
+        if node.get("type") == "MarkdownNote" and node.get("title") == note_title:
+            values = node.get("widgets_values", [])
+            if not values:
+                node["widgets_values"] = [content]
+            elif mode == "append":
+                existing = str(values[0])
+                node["widgets_values"][0] = existing + "\n" + content if existing else content
+            else:
+                node["widgets_values"][0] = content
+            return workflow
+
+    # Node not found — create a new one
+    max_id = max((n.get("id", 0) for n in nodes), default=0)
+    new_node = {
+        "id": max_id + 1,
+        "type": "MarkdownNote",
+        "title": note_title,
+        "widgets_values": [content],
+        "color": "#432",
+        "bgcolor": "#653",
+        "pos": [0, 0],
+        "size": [300, 200],
+        "flags": {},
+        "order": len(nodes),
+        "mode": 0,
+    }
+    nodes.append(new_node)
+    return workflow
+
+
 def _extract_readme(workflow: dict) -> str:
     """Extract description from MarkdownNote node with title 'README' (legacy)."""
     return _extract_markdown_note(workflow, "README") or ""
@@ -390,6 +434,50 @@ def read_template_doc(name: str, title: str) -> dict:
         "title": title,
         "content": content,
     }
+
+
+def update_template_doc(name: str, title: str, content: str, mode: str = "replace") -> dict:
+    """Update a documentation section in a template.
+
+    Updates the MarkdownNote node in the embedded workflow and syncs the
+    top-level 'title'/'description' field when applicable.
+
+    Args:
+        name: Template name.
+        title: Documentation section title (e.g. "description", "usage", "tips").
+        content: Markdown content to write.
+        mode: "replace" to overwrite entirely, "append" to add to the end.
+    """
+    if mode not in ("replace", "append"):
+        return {"error": f"Invalid mode '{mode}', must be 'replace' or 'append'"}
+
+    template = get_template(name)
+    if not template:
+        return {"error": f"Template '{name}' not found"}
+    if is_template_disabled(template):
+        return {"error": f"Template '{name}' is disabled"}
+
+    workflow = template.get("workflow", {})
+    _upsert_markdown_note(workflow, title, content, mode)
+
+    # Sync top-level fields when the section is title or description
+    updated_content = _extract_markdown_note(workflow, title)
+    if title == "title":
+        template["title"] = updated_content or ""
+    elif title == "description":
+        template["description"] = updated_content or ""
+
+    # Persist
+    path = config.get_template_dir() / f"{name}.json"
+    path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return {
+        "template": name,
+        "title": title,
+        "mode": mode,
+        "content": updated_content,
+    }
+
 
 async def _fetch_history_entry(prompt_id: str) -> dict | None:
     history = await _comfyui_client().get_history(prompt_id)
