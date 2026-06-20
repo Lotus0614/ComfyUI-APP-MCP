@@ -84,7 +84,7 @@ class MediaProxyMiddleware:
             target += f"?{query}"
 
         try:
-            async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with httpx.AsyncClient(follow_redirects=True, trust_env=False) as client:
                 upstream = await client.get(
                     target,
                     headers=config.get_comfyui_headers(),

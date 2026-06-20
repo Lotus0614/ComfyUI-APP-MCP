@@ -11,7 +11,7 @@ class ComfyUIClient:
         self.headers = headers or {}
 
     async def _get(self, path: str, *, params: dict | None = None, timeout: float = 10) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             resp = await client.get(
                 f"{self.base_url}{path}",
                 params=params,
@@ -22,7 +22,7 @@ class ComfyUIClient:
             return resp.json()
 
     async def _post(self, path: str, json: dict | None = None, *, timeout: float = 30) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             resp = await client.post(
                 f"{self.base_url}{path}",
                 headers=self.headers,
@@ -62,7 +62,7 @@ class ComfyUIClient:
         return await self._get("/history")
 
     async def interrupt(self) -> None:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             await client.post(f"{self.base_url}/interrupt", headers=self.headers, timeout=10)
 
     # ── User data / workflows ──────────────────────────────
@@ -85,7 +85,7 @@ class ComfyUIClient:
     # ── Files ───────────────────────────────────────────────
 
     async def download_view(self, filename: str, subfolder: str = "", file_type: str = "output") -> bytes:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        async with httpx.AsyncClient(follow_redirects=True, trust_env=False) as client:
             resp = await client.get(
                 f"{self.base_url}/view",
                 params={"filename": filename, "subfolder": subfolder, "type": file_type},
@@ -96,7 +96,7 @@ class ComfyUIClient:
             return resp.content
 
     async def upload_image_bytes(self, filename: str, image_bytes: bytes, overwrite: bool = True) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             resp = await client.post(
                 f"{self.base_url}/upload/image",
                 headers=self.headers,

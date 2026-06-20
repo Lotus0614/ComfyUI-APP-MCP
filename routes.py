@@ -372,7 +372,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     body = await request.read()
     logger.info(f"[MCP Proxy] {request.method} {request.path} -> {target}")
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             upstream = await client.request(
                 method=request.method,
                 url=target,
