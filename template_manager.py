@@ -457,11 +457,12 @@ def read_template_doc(name: str, title: str) -> dict:
     }
 
 
-def update_template_doc(name: str, title: str, content: str, mode: str = "replace") -> dict:
+async def update_template_doc(name: str, title: str, content: str, mode: str = "replace") -> dict:
     """Update a documentation section in a template.
 
-    Updates the MarkdownNote node in the embedded workflow and syncs the
-    top-level 'title'/'description' field when applicable.
+    Updates the MarkdownNote node in the embedded workflow, syncs the
+    top-level 'title'/'description' field when applicable, and writes
+    the workflow back to ComfyUI's userdata storage.
 
     Args:
         name: Template name.
@@ -488,9 +489,15 @@ def update_template_doc(name: str, title: str, content: str, mode: str = "replac
     elif title == "description":
         template["description"] = updated_content or ""
 
-    # Persist
+    # Persist template file
     path = config.get_template_dir() / f"{name}.json"
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Write back to ComfyUI's original workflow storage
+    try:
+        await _comfyui_client().save_workflow(name, workflow)
+    except Exception as e:
+        logger.warning(f"[update_template_doc] Failed to sync workflow back to ComfyUI: {e}")
 
     return {
         "template": name,

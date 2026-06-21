@@ -19,12 +19,14 @@ API_PREFIX = "/mcp-server/api"
 def _setting_getters() -> dict[str, callable]:
     return {
         "run_template_timeout": config.get_run_template_timeout,
+        "update_doc_enabled": config.get_update_doc_enabled,
     }
 
 
 def _setting_setters() -> dict[str, callable]:
     return {
         "run_template_timeout": config.set_run_template_timeout,
+        "update_doc_enabled": config.set_update_doc_enabled,
     }
 
 
@@ -69,13 +71,19 @@ async def set_runtime_setting(request):
         return web.json_response({"error": f"Invalid JSON: {e}"}, status=400)
 
     raw_value = data.get("value")
-    try:
-        value = float(raw_value)
-    except (TypeError, ValueError):
-        return web.json_response({"error": "value must be a number"}, status=400)
 
-    if value <= 0:
-        return web.json_response({"error": "value must be greater than 0"}, status=400)
+    # Dispatch by key for type coercion
+    if key == "run_template_timeout":
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "value must be a number"}, status=400)
+        if value <= 0:
+            return web.json_response({"error": "value must be greater than 0"}, status=400)
+    elif key == "update_doc_enabled":
+        value = bool(raw_value)
+    else:
+        value = raw_value
 
     updated = setter(value)
     return web.json_response({"key": key, "value": updated})

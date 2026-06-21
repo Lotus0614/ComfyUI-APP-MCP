@@ -60,8 +60,6 @@ const I18N = {
         mcpNotReachable: 'MCP server not reachable',
         statusSetting: 'MCP Server Status',
         templatesSetting: 'Templates',
-        statusCategory: 'Status',
-        templatesCategory: 'Templates',
         templatesTooltip: 'Create and manage MCP templates from workflows',
         nodeLabel: 'node',
         defaultLabel: 'default',
@@ -69,7 +67,9 @@ const I18N = {
         runTemplateTimeoutSetting: 'Run Template Timeout',
         runTemplateTimeoutTooltip:
             'Default wait timeout in seconds when wait=true (applies to run_template and get_template_result)',
-        timeoutCategory: 'Execution',
+        updateDocEnabledSetting: 'Enable Update Template Doc',
+        updateDocEnabledTooltip:
+            'Allow the update_template_doc MCP tool to modify template documentation',
     },
     zh: {
         refresh: '刷新',
@@ -125,8 +125,6 @@ const I18N = {
         mcpNotReachable: '无法连接 MCP 服务',
         statusSetting: 'MCP 服务状态',
         templatesSetting: '模板',
-        statusCategory: '状态',
-        templatesCategory: '模板',
         templatesTooltip: '从工作流创建和管理 MCP 模板',
         nodeLabel: '节点',
         defaultLabel: '默认值',
@@ -134,7 +132,9 @@ const I18N = {
         runTemplateTimeoutSetting: '模板运行超时',
         runTemplateTimeoutTooltip:
             'wait=true 时的默认等待超时秒数（适用于 run_template 和 get_template_result）',
-        timeoutCategory: '执行',
+        updateDocEnabledSetting: '启用更新模板文档',
+        updateDocEnabledTooltip:
+            '允许 update_template_doc MCP 工具修改模板文档',
     },
 };
 

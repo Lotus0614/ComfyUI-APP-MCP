@@ -18,6 +18,7 @@ _config_path_override: Path | None = None
 _loaded_config: dict[str, Any] | None = None
 _loaded_config_dir: Path | None = None
 _runtime_run_template_timeout: float | None = None
+_runtime_update_doc_enabled: bool | None = None
 
 
 def configure(config_path: str | os.PathLike[str] | None = None) -> None:
@@ -140,3 +141,22 @@ def set_run_template_timeout(value: float) -> float:
     global _runtime_run_template_timeout
     _runtime_run_template_timeout = float(value)
     return _runtime_run_template_timeout
+
+
+def get_update_doc_enabled() -> bool:
+    """Whether the update_template_doc tool is enabled."""
+    if _runtime_update_doc_enabled is not None:
+        return _runtime_update_doc_enabled
+    value = os.environ.get("MCP_UPDATE_DOC_ENABLED")
+    if value is None:
+        value = _section("mcp").get("updateDocEnabled", True)
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() not in {"0", "false", "no", "off"}
+
+
+def set_update_doc_enabled(value: bool) -> bool:
+    """Override update_doc_enabled at runtime."""
+    global _runtime_update_doc_enabled
+    _runtime_update_doc_enabled = bool(value)
+    return _runtime_update_doc_enabled

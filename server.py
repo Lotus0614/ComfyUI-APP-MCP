@@ -177,8 +177,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             mode: "replace" to overwrite entirely, "append" to add to the end.
         """
         logger.info(f"[MCP] update_template_doc(name={name!r}, title={title!r}, mode={mode!r})")
+        if not config.get_update_doc_enabled():
+            return json.dumps({"error": "update_template_doc is disabled. Enable it in MCP Server settings."})
         try:
-            result = template_manager.update_template_doc(name, title, content, mode)
+            result = await template_manager.update_template_doc(name, title, content, mode)
             if result.get("error"):
                 logger.warning(f"[MCP] update_template_doc → {result['error']}")
             return json.dumps(result, ensure_ascii=False)

@@ -82,6 +82,17 @@ class ComfyUIClient:
     async def get_workflow(self, name: str) -> dict:
         return await self._get(f"/api/userdata/workflows%2F{name}.json", timeout=10)
 
+    async def save_workflow(self, name: str, workflow: dict) -> None:
+        """Write a workflow back to ComfyUI's userdata storage."""
+        async with httpx.AsyncClient(trust_env=False) as client:
+            resp = await client.post(
+                f"{self.base_url}/api/userdata/workflows%2F{name}.json",
+                headers=self.headers,
+                json=workflow,
+                timeout=10,
+            )
+            resp.raise_for_status()
+
     # ── Files ───────────────────────────────────────────────
 
     async def download_view(self, filename: str, subfolder: str = "", file_type: str = "output") -> bytes:
