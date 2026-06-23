@@ -332,12 +332,13 @@ result2 = run_template("图片加密.app", '{}', bindings='{"image": {"from": "a
 
 上传后返回文件名，填入模板参数即可使用。
 
-#### `list_models(folder="")`
+#### `list_models(folder="", keywords="")`
 
 查询 ComfyUI 模型目录或指定目录下的模型列表。
 
 - 不传 `folder`：返回可查询的模型目录
 - 传 `folder`：返回该目录下的模型文件，如 `checkpoints`、`loras`、`vae`、`controlnet`
+- `keywords`：可选搜索关键词，大小写不敏感，多个关键词用空格分隔（AND 条件），如 `keywords="sdxl"` 或 `keywords="detail anime"`
 
 #### `get_template_result(name, prompt_id, wait=false, timeout=300)`
 

@@ -215,22 +215,29 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return json.dumps({"error": str(e)})
 
     @mcp.tool()
-    async def list_models(folder: str = "") -> str:
+    async def list_models(folder: str = "", keywords: str = "") -> str:
         """List ComfyUI model folders or models in a specific folder.
 
         Args:
             folder: Optional ComfyUI model folder name, e.g. "checkpoints", "loras",
                     "vae", "controlnet". If omitted, returns available model folders.
+            keywords: Optional search keywords to filter models (case-insensitive).
+                      Multiple keywords separated by spaces are treated as AND conditions.
         """
         folder = folder.strip().strip("/")
-        logger.info(f"[MCP] list_models(folder={folder!r})")
+        logger.info(f"[MCP] list_models(folder={folder!r}, keywords={keywords!r})")
         try:
             if not folder:
                 folders = await client.list_model_folders()
                 logger.info(f"[MCP] list_models → {len(folders)} folders")
                 return json.dumps({"folders": folders}, ensure_ascii=False)
             models = await client.list_models(folder)
-            logger.info(f"[MCP] list_models → {len(models)} models in {folder}")
+            if keywords:
+                terms = keywords.lower().split()
+                models = [m for m in models if all(t in m.lower() for t in terms)]
+                logger.info(f"[MCP] list_models → {len(models)} models in {folder} (filtered by {keywords!r})")
+            else:
+                logger.info(f"[MCP] list_models → {len(models)} models in {folder}")
             return json.dumps({"folder": folder, "models": models}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[MCP] list_models error: {e}")

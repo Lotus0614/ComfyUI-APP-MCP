@@ -267,12 +267,13 @@ Supported sources:
 
 The upload returns a filename that can be used as a template parameter.
 
-#### `list_models(folder="")`
+#### `list_models(folder="", keywords="")`
 
 Lists ComfyUI model folders or models inside a specific folder.
 
 - Without `folder`: returns available model directories
 - With `folder`: returns models in that directory, such as `checkpoints`, `loras`, `vae`, or `controlnet`
+- `keywords`: optional search keywords, case-insensitive, multiple keywords separated by spaces act as AND conditions, e.g. `keywords="sdxl"` or `keywords="detail anime"`
 
 #### `get_template_result(name, prompt_id, wait=false, timeout=300)`
 
