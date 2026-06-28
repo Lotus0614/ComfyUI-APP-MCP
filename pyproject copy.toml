@@ -1,0 +1,18 @@
+[project]
+name = "app-mode-mcp"
+description = "a ComfyUI plugin to transform APP Mode workflow to MCP"
+version = "1.0.0"
+license = { text = "MIT License" }
+requires-python = ">=3.9"
+
+classifiers = [
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/Luo-Lotus/ComfyUI-APP-MCP"
+"Bug Tracker" = "https://github.com/Luo-Lotus/ComfyUI-APP-MCP/issues"
+
+[tool.comfy]
+PublisherId = "lotus"
+DisplayName = "APP Mode MCP"
