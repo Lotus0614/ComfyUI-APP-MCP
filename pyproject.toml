@@ -1,17 +1,23 @@
 [project]
-name = "comfyui-mcp-server"
-version = "0.1.0"
-description = "MCP Server for ComfyUI - Manage and execute workflow templates via Model Context Protocol"
-requires-python = ">=3.10"
+name = "app-mode-mcp"
+description = "a ComfyUI plugin to transform APP Mode workflow to MCP"
+version = "1.0.0"
+license = { text = "MIT License" }
+requires-python = ">=3.9"
+
+classifiers = [
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
     "uvicorn>=0.30.0",
 ]
 
-[project.scripts]
-comfyui-mcp = "standalone:main"
+[project.urls]
+Repository = "https://github.com/Luo-Lotus/ComfyUI-APP-MCP"
+"Bug Tracker" = "https://github.com/Luo-Lotus/ComfyUI-APP-MCP/issues"
 
 [tool.comfy]
-PublisherId = "comfyui-mcp"
-DisplayName = "ComfyUI MCP Server"
+PublisherId = "lotus"
+DisplayName = "APP Mode MCP"
