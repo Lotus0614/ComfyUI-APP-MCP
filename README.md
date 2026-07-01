@@ -178,6 +178,7 @@ AI 助手通过 MCP 协议使用以下工具：
 - `description`：模板详细描述（从工作流中的 `description` MarkdownNote 节点提取，兼容 README）
 - `inputs`：可配置的输入参数列表（名称、类型、默认值）。名为 `seed` 的输入由运行时自动随机填入，不会在 MCP `get_template` 中返回给 AI。
 - `outputs`：输出节点列表
+- `docs`：可通过 `read_template_doc(name, title)` 读取的文档标题列表
 
 已禁用的模板不可查询，调用会返回错误。
 

@@ -113,7 +113,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def get_template(name: str) -> str:
-        """Get template details: description, inputs (parameters you can set), and outputs.
+        """Get template details: description, inputs, outputs, and readable docs.
 
         Args:
             name: Template name.
@@ -136,6 +136,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                     if key != "seed"
                 },
                 "outputs": template.get("outputs", {}),
+                "docs": template_manager.list_template_docs(template),
             })
         except Exception as e:
             logger.error(f"[MCP] get_template error: {e}")
@@ -450,7 +451,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "Each template wraps a workflow and exposes its configurable parameters as named inputs.\n\n"
             "### How to Use\n"
             "1. Call `list_templates()` to see all available templates with their names and descriptions.\n"
-            "2. Call `get_template('<name>')` to see the template's inputs (parameters you can set) and outputs.\n"
+            "2. Call `get_template('<name>')` to see the template's inputs, outputs, and readable doc titles.\n"
             "3. If you need extra docs, call `read_template_doc('<name>', '<title>')` for a specific documentation section.\n"
             "4. Call `run_template('<name>', '{\"param\": \"value\"}')` to execute with your parameters.\n"
             "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"

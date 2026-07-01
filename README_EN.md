@@ -113,6 +113,7 @@ Returns template details including:
 - `description`: detailed description, extracted from the workflow `description` Markdown node
 - `inputs`: configurable input parameters, including name, type, and default value. Inputs named `seed` are automatically randomized at runtime and are not returned to AI clients by MCP `get_template`.
 - `outputs`: output node definitions
+- `docs`: doc title list readable through `read_template_doc(name, title)`
 
 Disabled templates cannot be queried.
 

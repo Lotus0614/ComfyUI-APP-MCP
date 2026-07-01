@@ -31,9 +31,10 @@
 ```
 
 **验证点：**
-- [ ] 返回 JSON 包含 `name`、`description`、`inputs`、`outputs`
+- [ ] 返回 JSON 包含 `name`、`description`、`inputs`、`outputs`、`docs`
 - [ ] `inputs` 是 dict，每个输入有 `node_id`、`widget`、`type`、`default`
 - [ ] `outputs` 是 dict，每个输出有 `node_id`、`type`、`title`
+- [ ] `docs` 是数组，包含所有可通过 `read_template_doc(name, title)` 读取的 MarkdownNote 标题
 - [ ] description 不为空
 
 ### 1.3 get_template — 不存在的模板

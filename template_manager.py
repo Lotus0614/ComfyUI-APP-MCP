@@ -93,6 +93,27 @@ def _extract_markdown_note(workflow: dict, note_title: str) -> str | None:
     return None
 
 
+def _list_readable_markdown_notes(workflow: dict) -> list[str]:
+    """List MarkdownNote titles that can be read by read_template_doc."""
+    docs = []
+    seen = set()
+    for node in workflow.get("nodes", []):
+        if node.get("type") != "MarkdownNote":
+            continue
+
+        title = node.get("title")
+        if not isinstance(title, str) or not title or title in seen:
+            continue
+
+        values = node.get("widgets_values", [])
+        if not values:
+            continue
+
+        docs.append(title)
+        seen.add(title)
+    return docs
+
+
 def _upsert_markdown_note(workflow: dict, note_title: str, content: str, mode: str = "replace") -> dict:
     """Update or insert a MarkdownNote node in the workflow.
 
@@ -436,6 +457,11 @@ def get_template(name: str) -> dict | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def list_template_docs(template: dict) -> list[str]:
+    """Return doc titles available through read_template_doc for a template."""
+    return _list_readable_markdown_notes(template.get("workflow", {}))
 
 
 def read_template_doc(name: str, title: str) -> dict:
