@@ -20,6 +20,7 @@ def _setting_getters() -> dict[str, callable]:
     return {
         "run_template_timeout": config.get_run_template_timeout,
         "update_doc_enabled": config.get_update_doc_enabled,
+        "max_concurrency": config.get_max_concurrency,
     }
 
 
@@ -27,6 +28,7 @@ def _setting_setters() -> dict[str, callable]:
     return {
         "run_template_timeout": config.set_run_template_timeout,
         "update_doc_enabled": config.set_update_doc_enabled,
+        "max_concurrency": config.set_max_concurrency,
     }
 
 
@@ -80,6 +82,16 @@ async def set_runtime_setting(request):
             return web.json_response({"error": "value must be a number"}, status=400)
         if value <= 0:
             return web.json_response({"error": "value must be greater than 0"}, status=400)
+    elif key == "max_concurrency":
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "value must be an integer"}, status=400)
+        # -1 (or any <= 0) means unlimited; positive ints enforce a cap.
+        if value != -1 and value <= 0:
+            return web.json_response(
+                {"error": "value must be -1 (unlimited) or a positive integer"}, status=400
+            )
     elif key == "update_doc_enabled":
         value = bool(raw_value)
     else:

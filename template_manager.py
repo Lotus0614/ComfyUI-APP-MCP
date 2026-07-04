@@ -824,6 +824,44 @@ def _is_widget_input(spec) -> bool:
     return False
 
 
+async def _enforce_queue_capacity(client) -> dict | None:
+    """Reject the run if the ComfyUI queue is at capacity.
+
+    Reads ``max_concurrency`` from config (<= 0 means unlimited → returns None).
+    Counts ``queue_running`` + ``queue_pending``. If that total is >= the limit,
+    returns an error dict (status ``queue_full``) so the caller can surface it
+    without submitting. If the queue probe fails, logs a warning and returns
+    None (best-effort: never block execution on a transient queue error).
+    """
+    max_concurrency = config.get_max_concurrency()
+    if max_concurrency <= 0:  # -1 / 0 = unlimited
+        return None
+    try:
+        queue_data = await client.get_queue()
+    except Exception as e:
+        logger.warning(f"[Template] queue capacity check failed, proceeding: {e}")
+        return None
+    running = len(queue_data.get("queue_running", []))
+    pending = len(queue_data.get("queue_pending", []))
+    in_flight = running + pending
+    if in_flight >= max_concurrency:
+        logger.info(
+            f"[Template] queue at capacity ({in_flight}/{max_concurrency}); rejecting run"
+        )
+        return {
+            "status": "queue_full",
+            "error": (
+                f"ComfyUI queue is at capacity: {in_flight} task(s) in flight "
+                f"(running={running}, pending={pending}), max_concurrency={max_concurrency}. "
+                "Retry later."
+            ),
+            "max_concurrency": max_concurrency,
+            "running": running,
+            "pending": pending,
+        }
+    return None
+
+
 async def _wait_for_result(
     prompt_id: str,
     outputs: dict,
@@ -1035,8 +1073,12 @@ async def execute_template(
     api_prompt = _inject_widget_values(api_prompt_data, inputs, params)
 
     # Submit to ComfyUI
+    client = _comfyui_client()
+    capacity_error = await _enforce_queue_capacity(client)
+    if capacity_error:
+        return capacity_error
     try:
-        result = await _comfyui_client().queue_prompt(api_prompt)
+        result = await client.queue_prompt(api_prompt)
     except httpx.HTTPStatusError as e:
         try:
             error_body = e.response.json()

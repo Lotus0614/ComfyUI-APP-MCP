@@ -13,12 +13,16 @@ DEFAULT_TEMPLATE_DIR = BASE_DIR / "templates"
 DEFAULT_MCP_HOST = "0.0.0.0"
 DEFAULT_MCP_PORT = 8189
 DEFAULT_RUN_TEMPLATE_TIMEOUT = 120
+# Max tasks allowed in the ComfyUI queue (running + pending) before run_template
+# is rejected. <= 0 (including the default -1) means unlimited.
+DEFAULT_MAX_CONCURRENCY = -1
 
 _config_path_override: Path | None = None
 _loaded_config: dict[str, Any] | None = None
 _loaded_config_dir: Path | None = None
 _runtime_run_template_timeout: float | None = None
 _runtime_update_doc_enabled: bool | None = None
+_runtime_max_concurrency: int | None = None
 
 
 def configure(config_path: str | os.PathLike[str] | None = None) -> None:
@@ -160,3 +164,26 @@ def set_update_doc_enabled(value: bool) -> bool:
     global _runtime_update_doc_enabled
     _runtime_update_doc_enabled = bool(value)
     return _runtime_update_doc_enabled
+
+
+def get_max_concurrency() -> int:
+    """Max tasks allowed in the ComfyUI queue before run_template is rejected.
+
+    <= 0 (including the default -1) means unlimited.
+    """
+    if _runtime_max_concurrency is not None:
+        return _runtime_max_concurrency
+    mcp = _section("mcp")
+    value = (
+        os.environ.get("MCP_MAX_CONCURRENCY")
+        or mcp.get("maxConcurrency")
+        or DEFAULT_MAX_CONCURRENCY
+    )
+    return int(value)
+
+
+def set_max_concurrency(value: int) -> int:
+    """Override max_concurrency at runtime."""
+    global _runtime_max_concurrency
+    _runtime_max_concurrency = int(value)
+    return _runtime_max_concurrency

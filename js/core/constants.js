@@ -24,4 +24,19 @@ export const RUNTIME_SETTINGS = [
         defaultValue: true,
         apiKey: 'update_doc_enabled',
     },
+    {
+        id: 'MCPServer.execution.maxConcurrency',
+        i18nName: 'maxConcurrencySetting',
+        i18nTooltip: 'maxConcurrencyTooltip',
+        type: 'number',
+        defaultValue: -1,
+        attrs: { step: 1, showButtons: true }, // no min: allow -1
+        apiKey: 'max_concurrency',
+        validate: (v) => {
+            const n = Math.floor(Number(v));
+            if (!Number.isFinite(n)) return null;
+            if (n === -1) return -1; // -1 = unlimited
+            return n > 0 ? n : null; // only -1 or positive ints are valid
+        },
+    },
 ];
