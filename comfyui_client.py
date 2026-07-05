@@ -50,8 +50,18 @@ class ComfyUIClient:
 
     # ── Prompt / Queue ──────────────────────────────────────
 
-    async def queue_prompt(self, workflow: dict) -> dict:
-        return await self._post("/prompt", json={"prompt": workflow})
+    async def queue_prompt(self, prompt: dict, *, workflow: dict | None = None) -> dict:
+        """Queue a prompt for execution.
+
+        If ``workflow`` (the UI-graph JSON) is given, it is embedded as
+        ``extra_data.extra_pnginfo`` so output images carry the workflow and the
+        API prompt in their PNG metadata (standard SaveImage/PreviewImage, plus
+        custom savers that go through ComfyUI's save path).
+        """
+        body: dict = {"prompt": prompt}
+        if workflow is not None:
+            body["extra_data"] = {"extra_pnginfo": {"workflow": workflow, "prompt": prompt}}
+        return await self._post("/prompt", json=body)
 
     async def get_queue(self) -> dict:
         return await self._get("/queue")

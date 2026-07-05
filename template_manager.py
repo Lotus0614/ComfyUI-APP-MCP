@@ -182,10 +182,81 @@ def _extract_title_and_description(workflow: dict) -> tuple[str, str]:
     return title, description
 
 
+def _collect_workflow_nodes(workflow: dict) -> tuple[dict, dict, dict]:
+    """Build a node lookup covering top-level AND subgraph-internal nodes.
+
+    ComfyUI subgraphs store their real nodes under
+    ``workflow.definitions.subgraphs[*].nodes``. The top-level graph only holds
+    *instance* nodes whose ``type`` is the subgraph UUID. When the frontend
+    converts the graph to an API prompt, internal nodes are keyed as
+    ``"<instance_id>:<internal_id>"`` (e.g. ``"150:124"``), while top-level
+    nodes keep their plain id (e.g. ``"110"``).
+
+    Returns:
+        (node_by_id, api_key_by_id, instance_by_internal_id) — keyed by the node
+        id as found in linearData (an int). ``api_key_by_id`` gives the key used
+        for that node in the converted api_prompt, which is what
+        injection/output-extraction must match against.
+        ``instance_by_internal_id`` maps a subgraph-internal node id to its
+        top-level instance node (the instance holds the user-facing input
+        labels); top-level nodes are absent from it. Top-level nodes take
+        precedence on id collisions; for a subgraph instantiated more than
+        once, the first instance wins.
+    """
+    node_by_id: dict = {}
+    api_key_by_id: dict = {}
+    instance_by_internal_id: dict = {}
+
+    top_nodes = workflow.get("nodes", []) or []
+    for n in top_nodes:
+        nid = n.get("id")
+        if nid is None:
+            continue
+        node_by_id[nid] = n
+        api_key_by_id[nid] = str(nid)
+
+    defs = workflow.get("definitions") or {}
+    subgraphs = defs.get("subgraphs") if isinstance(defs, dict) else None
+    if not isinstance(subgraphs, list):
+        return node_by_id, api_key_by_id, instance_by_internal_id
+
+    subgraph_by_uuid = {sg.get("id"): sg for sg in subgraphs if isinstance(sg, dict)}
+    # A top-level node whose `type` is a subgraph UUID instantiates that subgraph.
+    for inst in top_nodes:
+        sg = subgraph_by_uuid.get(inst.get("type"))
+        if not sg:
+            continue
+        inst_id = inst.get("id")
+        for internal in sg.get("nodes", []) or []:
+            iid = internal.get("id")
+            if iid is None or iid in node_by_id:
+                continue  # id already known (top-level or earlier instance)
+            node_by_id[iid] = internal
+            api_key_by_id[iid] = f"{inst_id}:{iid}"
+            instance_by_internal_id.setdefault(iid, inst)
+
+    return node_by_id, api_key_by_id, instance_by_internal_id
+
+
+def _resolve_input_label(instance_node: dict | None, internal_input: dict, widget_name: str) -> str:
+    """Pick the display label for a subgraph-internal (or top-level) input.
+
+    The user-facing labels live on the subgraph *instance* node's proxied
+    inputs; internal nodes often have stale or colliding labels (e.g. two slots
+    both labeled '画师'). Prefer the instance's label for the matching widget,
+    then the internal input's own label, then the widget name.
+    """
+    if instance_node:
+        for ii in instance_node.get("inputs", []) or []:
+            iwi = ii.get("widget") or {}
+            if (iwi.get("name") or ii.get("name")) == widget_name:
+                return ii.get("label") or internal_input.get("label") or widget_name
+    return internal_input.get("label") or widget_name
+
+
 def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
     """Extract inputs from linearData.inputs."""
-    nodes = workflow.get("nodes", [])
-    node_map = {n["id"]: n for n in nodes}
+    node_map, api_key_map, instance_by_internal = _collect_workflow_nodes(workflow)
 
     linear_inputs = []  # list of (node_id, widget_name)
     extra = workflow.get("extra", {})
@@ -205,6 +276,8 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
         node = node_map.get(node_id)
         if not node:
             continue
+        api_key = api_key_map.get(node_id, str(node_id))
+        instance = instance_by_internal.get(node_id)  # None for top-level nodes
         widgets_values = node.get("widgets_values", [])
         found = False
 
@@ -216,11 +289,12 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
             # Only register the widget specified in linearData
             if target_widget and widget_name != target_widget:
                 continue
-            label = inp.get("label") or widget_name
+            label = _resolve_input_label(instance, inp, widget_name)
             found = True
 
             entry = {
                 "node_id": node_id,
+                "api_key": api_key,
                 "widget": widget_name,
                 "type": inp.get("type", "STRING"),
             }
@@ -245,6 +319,7 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                     widget_type = "COMBO"
                 entry = {
                     "node_id": node_id,
+                    "api_key": api_key,
                     "widget": target_widget,
                     "type": widget_type if isinstance(widget_type, str) else "STRING",
                 }
@@ -256,38 +331,42 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
     return inputs
 
 
-def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
-    """Read the current widget value from a node's widgets_values by widget name.
+def _widget_value_slots(node: dict, node_defs: dict) -> list[tuple[str, int]]:
+    """Map each widget name to its positional index in the node's widgets_values.
 
-    Handles hidden control_after_generate widgets and dynamic sub-inputs.
+    Mirrors ComfyUI's widget serialization order, including hidden
+    ``control_after_generate`` slots (which advance the index without producing
+    a user-facing widget) and dynamic-combo sub-inputs. Returns ``[]`` if the
+    node has no widgets_values or its class is missing from ``node_defs``.
+    Shared by the default-value reader and the UI-workflow value injector so
+    reads and writes always agree on slot positions.
     """
     class_type = node.get("type", "")
     widgets_values = node.get("widgets_values", [])
     if not widgets_values:
-        return None
+        return []
 
     node_def = node_defs.get(class_type, {})
     input_def = node_def.get("input", {})
     required = input_def.get("required", {})
     optional = input_def.get("optional", {})
 
-    # Build ordered widget names
+    # Build ordered widget names from the node definition
     widget_names = []
     for input_name in list(required.keys()) + list(optional.keys()):
         spec = required.get(input_name) or optional.get(input_name)
         if spec and _is_widget_input(spec):
             widget_names.append(input_name)
 
-    # Build all_widgets with hidden controls and dynamic sub-inputs
-    all_widgets = []  # [(name, is_hidden)]
+    slots: list[tuple[str, int]] = []
     vi = 0
     for wname in widget_names:
-        all_widgets.append((wname, False))
+        slots.append((wname, vi))
         vi += 1
         spec = required.get(wname) or optional.get(wname)
         is_dynamic_combo = spec and isinstance(spec, list) and isinstance(spec[0], str) and spec[0].startswith("COMFY_DYNAMICCOMBO")
         is_int_float = spec and isinstance(spec, list) and spec[0] in ("INT", "FLOAT")
-        # After a dynamic combo widget, add its active sub-inputs
+        # After a dynamic combo widget, its active sub-inputs occupy slots too.
         if is_dynamic_combo and vi > 0:
             selected_key = widgets_values[vi - 1] if vi - 1 < len(widgets_values) else None
             combo_options = spec[1].get("options", []) if len(spec) > 1 and isinstance(spec[1], dict) else []
@@ -295,41 +374,66 @@ def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
                 if isinstance(opt, dict) and opt.get("key") == selected_key:
                     req = opt.get("inputs", {}).get("required", {})
                     for sub_name in req:
-                        all_widgets.append((f"{wname}.{sub_name}", False))
+                        slots.append((f"{wname}.{sub_name}", vi))
                         vi += 1
                     break
         elif is_int_float and vi < len(widgets_values):
-            next_val = widgets_values[vi]
-            if next_val in ("randomize", "increment", "decrement", "fixed"):
-                all_widgets.append(("_hidden_" + wname, True))
+            # Hidden control_after_generate slot advances the index silently.
+            if widgets_values[vi] in ("randomize", "increment", "decrement", "fixed"):
                 vi += 1
+    return slots
 
-    # Find the target widget and return its value
-    vi = 0
-    for wname, is_hidden in all_widgets:
-        if vi >= len(widgets_values):
-            break
-        if is_hidden:
-            vi += 1
-            continue
-        if wname == widget_name:
-            return widgets_values[vi]
-        vi += 1
 
+def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
+    """Read the current widget value from a node's widgets_values by widget name."""
+    widgets_values = node.get("widgets_values", [])
+    for wname, idx in _widget_value_slots(node, node_defs):
+        if wname == widget_name and idx < len(widgets_values):
+            return widgets_values[idx]
     return None
+
+
+def _inject_widget_values_into_workflow(
+    workflow: dict, inputs: dict, params: dict, node_defs: dict
+) -> dict:
+    """Return a deep copy of the UI workflow with user params written into the
+    matching nodes' ``widgets_values``.
+
+    This is the UI-graph counterpart of ``_inject_widget_values`` (which targets
+    the API prompt). The result is meant for ``extra_data.extra_pnginfo.workflow``
+    so images embed a workflow that reflects the actual run values. Top-level and
+    subgraph-internal nodes are both resolved via ``_collect_workflow_nodes``.
+
+    Best-effort: params whose node/widget can't be located (or whose class is
+    missing from node_defs) are silently skipped — execution correctness is not
+    affected, only the embedded metadata. The input ``workflow`` is never
+    mutated (a deep copy is returned).
+    """
+    import copy
+    wf = copy.deepcopy(workflow)
+    node_map, _api_key_map, _inst = _collect_workflow_nodes(wf)
+    for param_name, value in params.items():
+        inp = inputs.get(param_name)
+        if not inp:
+            continue
+        node = node_map.get(inp["node_id"])
+        if not node:
+            continue
+        widgets_values = node.get("widgets_values")
+        if not isinstance(widgets_values, list) or not widgets_values:
+            continue
+        widget_name = inp["widget"]
+        for wname, idx in _widget_value_slots(node, node_defs):
+            if wname == widget_name and idx < len(widgets_values):
+                widgets_values[idx] = value
+                break
+    return wf
 
 
 def _detect_output_nodes(workflow: dict) -> dict:
     """Detect output nodes from linearData.outputs (explicit user selection),
     falling back to auto-detection of terminal nodes."""
-    nodes = workflow.get("nodes", [])
-
-    # Build node_id → node mapping
-    node_map = {}
-    for node in nodes:
-        nid = node.get("id")
-        if nid is not None:
-            node_map[str(nid)] = node
+    node_map, api_key_map, _ = _collect_workflow_nodes(workflow)
 
     # Try linearData.outputs first (explicit user selection in editor)
     linear_outputs = None
@@ -344,20 +448,26 @@ def _detect_output_nodes(workflow: dict) -> dict:
     outputs = {}
     if linear_outputs:
         for nid in linear_outputs:
-            node = node_map.get(nid)
+            try:
+                node_id = int(nid)
+            except (TypeError, ValueError):
+                continue
+            node = node_map.get(node_id)
             if not node:
                 continue
             class_type = node.get("type", "")
             title = node.get("title") or class_type
             if class_type in _UI_ONLY_TYPES:
                 continue
+            api_key = api_key_map.get(node_id, str(node_id))
             node_outputs = node.get("outputs", [])
             if node_outputs:
                 for out in node_outputs:
                     out_type = out.get("type", "")
                     name = f"{title}_{nid}_{out.get('name', 'out')}"
                     outputs[name] = {
-                        "node_id": int(nid),
+                        "node_id": node_id,
+                        "api_key": api_key,
                         "type": _output_type_from_comfy(out_type),
                         "comfy_type": out_type,
                         "title": title,
@@ -366,25 +476,39 @@ def _detect_output_nodes(workflow: dict) -> dict:
                 # Terminal node with no outputs (SaveImage, SaveAudio, etc.)
                 name = f"{title}_{nid}_output"
                 outputs[name] = {
-                    "node_id": int(nid),
+                    "node_id": node_id,
+                    "api_key": api_key,
                     "type": "unknown",
                     "comfy_type": "unknown",
                     "title": title,
                 }
         return outputs
 
-    # Fallback: auto-detect terminal nodes
-    links = workflow.get("links", [])
-    used_outputs = set()
-    for link in links:
-        if len(link) >= 3:
-            used_outputs.add((link[1], link[2]))
+    # Fallback: auto-detect terminal nodes whose outputs nothing consumes.
+    # Collect used output slots from top-level links and every subgraph's
+    # internal links (subgraph links are dicts; top-level links are lists).
+    subgraph_uuids = set()
+    defs = workflow.get("definitions") or {}
+    subgraphs = defs.get("subgraphs") if isinstance(defs, dict) else None
+    if isinstance(subgraphs, list):
+        subgraph_uuids = {sg.get("id") for sg in subgraphs if isinstance(sg, dict)}
 
-    for node in nodes:
-        node_id = node.get("id")
+    used_outputs = set()
+    for link in workflow.get("links", []) or []:
+        if isinstance(link, list) and len(link) >= 3:
+            used_outputs.add((link[1], link[2]))
+    if isinstance(subgraphs, list):
+        for sg in subgraphs:
+            for link in sg.get("links", []) or []:
+                if isinstance(link, dict):
+                    used_outputs.add((link.get("origin_id"), link.get("origin_slot")))
+
+    for node_id, node in node_map.items():
         class_type = node.get("type", "")
         title = node.get("title") or class_type
-        if class_type in _UI_ONLY_TYPES:
+        # Skip UI-only nodes and subgraph *instance* nodes (their outputs are
+        # proxies with no real api_prompt key).
+        if class_type in _UI_ONLY_TYPES or class_type in subgraph_uuids:
             continue
         for out_idx, out in enumerate(node.get("outputs", [])):
             if (node_id, out_idx) not in used_outputs:
@@ -392,6 +516,7 @@ def _detect_output_nodes(workflow: dict) -> dict:
                 name = f"{title}_{node_id}_{out.get('name', out_idx)}"
                 outputs[name] = {
                     "node_id": node_id,
+                    "api_key": api_key_map.get(node_id, str(node_id)),
                     "type": _output_type_from_comfy(out_type),
                     "comfy_type": out_type,
                     "title": title,
@@ -932,18 +1057,20 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
 
     output_meta_by_node_id = {}
     for output_name, output_meta in outputs.items():
-        node_id = output_meta.get("node_id")
-        if node_id is None:
+        # Match by api_key (the node's key in history, e.g. "150:124" inside a
+        # subgraph); fall back to node_id for older templates.
+        key = output_meta.get("api_key", output_meta.get("node_id"))
+        if key is None:
             continue
-        output_meta_by_node_id[str(node_id)] = {
+        output_meta_by_node_id[str(key)] = {
             "output_name": output_name,
             "title": output_meta.get("title", ""),
-            "node_id": node_id,
+            "node_id": output_meta.get("node_id"),
         }
 
     # If outputs are configured, only include those nodes
     if outputs:
-        target_node_ids = {str(v.get("node_id")) for v in outputs.values()}
+        target_node_ids = {str(v.get("api_key", v.get("node_id"))) for v in outputs.values()}
     else:
         target_node_ids = set(output_data.keys())
 
@@ -1018,11 +1145,14 @@ def _inject_widget_values(api_prompt_data: dict, inputs: dict, params: dict) -> 
         if param_name not in inputs:
             continue
         inp = inputs[param_name]
-        node_id = str(inp["node_id"])
+        # api_key matches the node's key in the converted api_prompt — for a
+        # node inside a subgraph this is "<instance>:<internal>" (e.g. "150:124").
+        # Older templates without api_key fall back to str(node_id).
+        api_key = str(inp.get("api_key") or inp["node_id"])
         widget_name = inp["widget"]
 
-        if node_id in api_prompt:
-            api_prompt[node_id]["inputs"][widget_name] = value
+        if api_key in api_prompt:
+            api_prompt[api_key]["inputs"][widget_name] = value
 
     return api_prompt
 
@@ -1072,13 +1202,24 @@ async def execute_template(
         return {"error": "Template missing api_prompt. Please refresh the template in the frontend."}
     api_prompt = _inject_widget_values(api_prompt_data, inputs, params)
 
+    # Build a UI-workflow copy with the same values injected, so output images
+    # embed a workflow (extra_pnginfo.workflow) that reflects this actual run.
+    # Best-effort: metadata must never block or break execution.
+    ui_workflow = template.get("workflow")
+    if ui_workflow:
+        try:
+            node_defs = await _get_node_definitions()
+            ui_workflow = _inject_widget_values_into_workflow(ui_workflow, inputs, params, node_defs)
+        except Exception as e:
+            logger.warning(f"[Template] UI-workflow metadata injection failed, embedding as-is: {e}")
+
     # Submit to ComfyUI
     client = _comfyui_client()
     capacity_error = await _enforce_queue_capacity(client)
     if capacity_error:
         return capacity_error
     try:
-        result = await client.queue_prompt(api_prompt)
+        result = await client.queue_prompt(api_prompt, workflow=ui_workflow)
     except httpx.HTTPStatusError as e:
         try:
             error_body = e.response.json()
