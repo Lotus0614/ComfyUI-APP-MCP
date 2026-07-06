@@ -20,6 +20,7 @@ def _setting_getters() -> dict[str, callable]:
     return {
         "run_template_timeout": config.get_run_template_timeout,
         "update_doc_enabled": config.get_update_doc_enabled,
+        "embed_workflow_metadata": config.get_embed_workflow_metadata,
         "max_concurrency": config.get_max_concurrency,
     }
 
@@ -28,6 +29,7 @@ def _setting_setters() -> dict[str, callable]:
     return {
         "run_template_timeout": config.set_run_template_timeout,
         "update_doc_enabled": config.set_update_doc_enabled,
+        "embed_workflow_metadata": config.set_embed_workflow_metadata,
         "max_concurrency": config.set_max_concurrency,
     }
 
@@ -92,7 +94,7 @@ async def set_runtime_setting(request):
             return web.json_response(
                 {"error": "value must be -1 (unlimited) or a positive integer"}, status=400
             )
-    elif key == "update_doc_enabled":
+    elif key in {"update_doc_enabled", "embed_workflow_metadata"}:
         value = bool(raw_value)
     else:
         value = raw_value

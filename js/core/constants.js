@@ -25,6 +25,14 @@ export const RUNTIME_SETTINGS = [
         apiKey: 'update_doc_enabled',
     },
     {
+        id: 'MCPServer.execution.embedWorkflowMetadata',
+        i18nName: 'embedWorkflowMetadataSetting',
+        i18nTooltip: 'embedWorkflowMetadataTooltip',
+        type: 'boolean',
+        defaultValue: true,
+        apiKey: 'embed_workflow_metadata',
+    },
+    {
         id: 'MCPServer.execution.maxConcurrency',
         i18nName: 'maxConcurrencySetting',
         i18nTooltip: 'maxConcurrencyTooltip',

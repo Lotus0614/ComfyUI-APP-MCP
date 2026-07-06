@@ -13,6 +13,7 @@ DEFAULT_TEMPLATE_DIR = BASE_DIR / "templates"
 DEFAULT_MCP_HOST = "0.0.0.0"
 DEFAULT_MCP_PORT = 8189
 DEFAULT_RUN_TEMPLATE_TIMEOUT = 120
+DEFAULT_EMBED_WORKFLOW_METADATA = True
 # Max tasks allowed in the ComfyUI queue (running + pending) before run_template
 # is rejected. <= 0 (including the default -1) means unlimited.
 DEFAULT_MAX_CONCURRENCY = -1
@@ -23,6 +24,7 @@ _loaded_config_dir: Path | None = None
 _runtime_run_template_timeout: float | None = None
 _runtime_update_doc_enabled: bool | None = None
 _runtime_max_concurrency: int | None = None
+_runtime_embed_workflow_metadata: bool | None = None
 
 
 def configure(config_path: str | os.PathLike[str] | None = None) -> None:
@@ -164,6 +166,25 @@ def set_update_doc_enabled(value: bool) -> bool:
     global _runtime_update_doc_enabled
     _runtime_update_doc_enabled = bool(value)
     return _runtime_update_doc_enabled
+
+
+def get_embed_workflow_metadata() -> bool:
+    """Whether generated images should embed workflow/prompt PNG metadata."""
+    if _runtime_embed_workflow_metadata is not None:
+        return _runtime_embed_workflow_metadata
+    value = os.environ.get("MCP_EMBED_WORKFLOW_METADATA")
+    if value is None:
+        value = _section("mcp").get("embedWorkflowMetadata", DEFAULT_EMBED_WORKFLOW_METADATA)
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() not in {"0", "false", "no", "off"}
+
+
+def set_embed_workflow_metadata(value: bool) -> bool:
+    """Override embed_workflow_metadata at runtime."""
+    global _runtime_embed_workflow_metadata
+    _runtime_embed_workflow_metadata = bool(value)
+    return _runtime_embed_workflow_metadata
 
 
 def get_max_concurrency() -> int:

@@ -1202,10 +1202,10 @@ async def execute_template(
         return {"error": "Template missing api_prompt. Please refresh the template in the frontend."}
     api_prompt = _inject_widget_values(api_prompt_data, inputs, params)
 
-    # Build a UI-workflow copy with the same values injected, so output images
-    # embed a workflow (extra_pnginfo.workflow) that reflects this actual run.
-    # Best-effort: metadata must never block or break execution.
-    ui_workflow = template.get("workflow")
+    # Build a UI-workflow copy with the same values injected when metadata
+    # embedding is enabled, so output images can carry a workflow that reflects
+    # this actual run. Best-effort: metadata must never block execution.
+    ui_workflow = template.get("workflow") if config.get_embed_workflow_metadata() else None
     if ui_workflow:
         try:
             node_defs = await _get_node_definitions()

@@ -70,6 +70,9 @@ const I18N = {
         updateDocEnabledSetting: 'Enable Update Template Doc',
         updateDocEnabledTooltip:
             'Allow the update_template_doc MCP tool to modify template documentation',
+        embedWorkflowMetadataSetting: 'Embed Workflow in Images',
+        embedWorkflowMetadataTooltip:
+            'Embed the executed workflow and API prompt into generated image metadata',
         maxConcurrencySetting: 'Max Concurrent Runs',
         maxConcurrencyTooltip:
             'Max tasks allowed in the ComfyUI queue (running + pending) before run_template is rejected. -1 = unlimited.',
@@ -138,6 +141,9 @@ const I18N = {
         updateDocEnabledSetting: '启用更新模板文档',
         updateDocEnabledTooltip:
             '允许 update_template_doc MCP 工具修改模板文档',
+        embedWorkflowMetadataSetting: '图片嵌入工作流',
+        embedWorkflowMetadataTooltip:
+            '将本次执行的工作流和 API Prompt 写入生成图片的元数据',
         maxConcurrencySetting: '最大同时运行数量',
         maxConcurrencyTooltip:
             '允许同时在 ComfyUI 队列中（运行中 + 排队中）的最大任务数，超过则 run_template 立即返回错误。-1 表示不限制。',
