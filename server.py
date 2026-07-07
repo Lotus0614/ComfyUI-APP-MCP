@@ -93,6 +93,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "When chaining templates, copy the binding_hint value directly into the next call's bindings parameter. "
             "NEVER use upload_image for template outputs - use bindings instead."
         ),
+        stateless_http=True,
         transport_security=_TRANSPORT_SECURITY,
     )
 
