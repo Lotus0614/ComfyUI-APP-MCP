@@ -2,43 +2,29 @@
 
 [中文](./README.md) | [English](./README_EN.md)
 
-A ComfyUI plugin that wraps ComfyUI workflows as MCP-callable templates, so AI assistants can use ComfyUI as a multimedia capability service that is queryable, executable, and chainable.
+A ComfyUI plugin that wraps ComfyUI apps as MCP-callable templates, so AI assistants can use ComfyUI as a multimedia capability service that is queryable, executable, and chainable. If you find bugs or have feature requests, join the QQ group: 1082160486, or open an issue.
 
 Key capabilities:
 
-- Template-based inputs and outputs, so the AI does not need to understand the ComfyUI node graph
+- Mark inputs and outputs through ComfyUI App Mode, so the AI only needs to pass input/output parameters and does not need to understand the ComfyUI node graph.
 - Template documentation with progressive disclosure through on-demand doc reads
 - Multi-template chaining, passing outputs from one step into later steps
 - Model directory lookup for folders such as `checkpoints` and `loras`
 
-## Core Concepts
-
-A template is a ComfyUI app plus auto-extracted input and output definitions.
-
-- **Inputs**: extracted from nodes marked in `linearData.inputs`
-- **Outputs**: extracted from nodes marked in `linearData.outputs`
-- The AI only needs to provide parameters and consume results; it does not need to understand the internal ComfyUI graph
-
-Template documentation conventions:
-
-- `title`: short template title shown in template lists
-- `description`: summary shown in template details
-- Other Markdown nodes: on-demand template docs retrievable with `read_template_doc(name, title)`
-
-This keeps templates concise by default while still allowing more detailed instructions, examples, prompt guidance, or notes when needed.
-
 ## Quick Start
 
-1. Build your workflow as an App in ComfyUI, mark input and output nodes, and rename input nodes to AI-friendly parameter names.
-2. Add Markdown nodes for template docs:
-   - Title `title`: short title
-   - Title `description`: template summary
-   - Other titles: on-demand template docs
-3. In the ComfyUI frontend, go to **Settings → MCP Server → Templates** and click **Create from Workflow**.
-4. Connect your MCP client to `http://127.0.0.1:8188/app-mcp`.
-5. Call `list_templates()` first to verify visibility, then use `get_template()`, `run_template()`, or `run_templates()`.
-
-> Templates depend on ComfyUI App Mode. Use a ComfyUI version that supports App Mode.
+1. Install this project as a ComfyUI plugin by placing it under the `custom_nodes` directory.
+2. Open a workflow in ComfyUI and click **Enter App Builder** from the top-left menu.
+3. Mark content that you want the AI to modify, such as prompt text boxes, as inputs. Mark Save Image nodes as outputs, and rename input nodes to AI-friendly parameter names.
+4. Add Markdown Note nodes to describe the template. The AI reads these node contents when it reads the template:
+   - Title `title`: short title shown when listing templates
+   - Title `description`: template description shown when fetching template details
+   - Other titles: on-demand template docs. Mention the title in `description` so the AI knows to read it
+5. In the ComfyUI frontend, go to **Settings → MCP Server → Templates** and click **Create from Workflow** to create a template from the configured workflow.
+6. Connect your MCP client to `http://127.0.0.1:8188/app-mcp` (or `http://127.0.0.1:8189/mcp`).
+7. Call `list_templates()` first to verify visibility, then use `get_template()`, `run_template()`, or `run_templates()`.
+8. If the workflow changes, click **Refresh** in the settings panel. If parameters changed, ask the AI to read the template again.
+   > Templates depend on ComfyUI App Mode. Use a ComfyUI version that supports App Mode.
 
 ## Dependencies
 
@@ -52,44 +38,83 @@ This plugin depends on the following Python packages:
 
 ### Installation
 
-#### Option 1: Use `requirements.txt` (recommended)
-
-```bash
-cd ComfyUI/custom_nodes/mcp-server
-pip install -r requirements.txt
-```
-
-#### Option 2: Install manually
-
-```bash
-pip install fastmcp>=1.0.0 uvicorn>=0.30.0 httpx>=0.27.0
-```
-
-#### Option 3: Use ComfyUI Manager
-
-If you use [ComfyUI Manager](https://github.com/ltdrdata/ComfyUI-Manager), it will prompt you to install missing dependencies after installing this plugin.
-
-> **Note**: For the Windows Portable build of ComfyUI, use its bundled Python:
->
-> ```bash
-> ..\..\..\python_embeded\python.exe -m pip install -r requirements.txt
-> ```
-
-## Configuration
-
 ### Environment Variables
 
-| Variable      | Default                 | Description        |
-| ------------- | ----------------------- | ------------------ |
-| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL |
+| Variable             | Default                 | Description                                                                 |
+| -------------------- | ----------------------- | --------------------------------------------------------------------------- |
+| `COMFYUI_URL`        | `http://127.0.0.1:8188` | ComfyUI server URL                                                          |
+| `COMFYUI_PUBLIC_URL` | Same as `COMFYUI_URL`   | Optional advanced setting; used for media links when the media proxy is off |
+| `MCP_CONFIG`         | Empty                   | JSON config file path for standalone mode                                   |
+| `MCP_TEMPLATE_DIR`   | `./templates`           | Template JSON directory                                                     |
+| `MCP_HOST`           | `0.0.0.0`               | MCP server bind host                                                        |
+| `MCP_PORT`           | `8189`                  | MCP server port                                                             |
+| `MCP_MEDIA_PROXY`    | `true`                  | Whether media links use the MCP `/view` proxy when accessing the MCP port directly |
+
+### Standalone Configuration
+
+The plugin can also run as a standalone MCP service without being loaded through ComfyUI's plugin flow. In this mode, ComfyUI and MCP can be deployed on different machines, but executing templates still requires the MCP service to access the ComfyUI HTTP API.
+
+Create `mcp.config.json`:
+
+```json
+{
+  "comfyui": {
+    "apiUrl": "http://192.168.1.20:8188",
+    "headers": {}
+  },
+  "mcp": {
+    "host": "0.0.0.0",
+    "port": 8189,
+    "mediaProxy": true
+  },
+  "templates": {
+    "dir": "./templates"
+  }
+}
+```
+
+- `comfyui.apiUrl`: the address MCP uses to access the ComfyUI API. Do not use `127.0.0.1` if MCP and ComfyUI are not on the same machine.
+- `mcp.mediaProxy`: when connecting directly to the standalone MCP port, media links in results point to MCP `/view`, and MCP forwards them to ComfyUI `/view`. This means clients do not need to expose or access the ComfyUI port.
+- `templates.dir`: local template JSON directory on the MCP machine. Standalone mode does not read the template directory on the ComfyUI machine.
+
+The recommended default is `mcp.mediaProxy=true`; usually `comfyui.publicUrl` is not needed. Add it only when the media proxy is disabled, or when you want media links to return a custom public or reverse-proxy ComfyUI address:
+
+```json
+{
+  "comfyui": {
+    "publicUrl": "https://comfy.example.com"
+  }
+}
+```
+
+Start the standalone MCP service:
+
+```bash
+python standalone.py --config ./mcp.config.json
+```
+
+MCP client URL:
+
+```text
+http://<mcp-machine-address>:8189/mcp
+```
 
 ### Startup
 
-Start ComfyUI normally. The plugin will be loaded automatically and expose MCP on the same ComfyUI port:
+Start ComfyUI normally. The plugin will be loaded automatically and expose MCP through the ComfyUI port:
 
 ```text
 MCP endpoint: http://127.0.0.1:8188/app-mcp
 ```
+
+In plugin mode, there are two MCP connection options:
+
+- **Connect through the ComfyUI port**: `http://<comfyui-address>:8188/app-mcp`
+  - Suitable when the ComfyUI port is already exposed
+  - MCP requests are proxied by ComfyUI to the internal MCP service
+- **Connect directly through the MCP port**: `http://<mcp-address>:8189/mcp`
+  - Suitable when you do not want MCP clients to access the ComfyUI port
+  - Media links in generated results point to MCP `/view`, then MCP forwards them to ComfyUI
 
 For remote access, start ComfyUI with `--listen`:
 
@@ -293,14 +318,27 @@ In **Settings → MCP Server**:
 - **Templates**: view, refresh, disable or enable, and delete templates
 - **Auto Extract Templates**: scan all workflows and auto-create templates for those with a `title` Markdown node that don't have a template yet
 - **Batch Refresh Templates**: refresh all templates from their source workflows, re-extracting inputs, outputs, title, and description
+- **Export Templates**: export the current template JSON files and download `mcp-templates.zip`
+
+The exported archive only contains templates:
+
+```text
+mcp-templates.zip
+└── templates/
+    ├── txt2img.json
+    └── upscale.json
+```
+
+For standalone deployment, extract `templates/` onto the MCP machine and point `templates.dir` in `mcp.config.json` to that directory.
 
 ## MCP Client Setup
 
-The MCP endpoint reuses the ComfyUI port:
+In plugin mode, you can choose either connection URL:
 
-```text
-http://<comfyui-address>/app-mcp
-```
+- `http://<comfyui-address>:8188/app-mcp`: access MCP through the ComfyUI port
+- `http://<mcp-address>:8189/mcp`: access the MCP port directly
+
+If you do not want to expose the ComfyUI port, clients can connect only to `8189/mcp`. In this case, media links such as images, audio, and GIFs return as `http://<mcp-address>:8189/view?...`, and MCP proxies them to ComfyUI `/view`.
 
 ### Claude Desktop
 
@@ -332,15 +370,11 @@ Add this to `.cursor/mcp.json`:
 
 ### Other MCP Clients
 
-Connection URL:
-
-```text
-http://<comfyui-address>/app-mcp
-```
+Connection URL: `http://<comfyui-address>/app-mcp` (Streamable HTTP transport)
 
 ### Remote Access
 
-Start ComfyUI with `--listen 0.0.0.0` to accept LAN connections. Image links will automatically use the correct address:
+Start ComfyUI with `--listen 0.0.0.0` to accept LAN connections. Then phones or other devices can connect directly, and image links will automatically use the correct address:
 
 ```json
 {
@@ -412,6 +446,8 @@ If binding returns an error, check:
 mcp-server/
 ├── __init__.py          # ComfyUI plugin entrypoint
 ├── server.py            # MCP tool definitions
+├── standalone.py        # Standalone MCP HTTP service entrypoint
+├── config.py            # JSON config and environment variable loading
 ├── template_manager.py  # Template CRUD, workflow conversion, execution engine
 ├── comfyui_client.py    # ComfyUI HTTP client
 ├── routes.py            # Frontend API routes and MCP proxy
