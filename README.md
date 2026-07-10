@@ -128,7 +128,7 @@ AI 助手通过 MCP 协议使用以下工具：
 
 #### `list_templates`
 
-列出所有可用模板，只返回模板名称、标题和简短描述。已禁用的模板不会出现在结果中。
+列出所有可用模板，只返回模板名称和标题。已禁用的模板不会出现在结果中。
 
 #### `get_template(name)`
 
@@ -175,12 +175,14 @@ AI 助手通过 MCP 协议使用以下工具：
     "最终提示词": {
       "type": "text",
       "value": "a cute cat, masterpiece, best quality...",
-      "ref": "result://abc-123/%E6%9C%80%E7%BB%88%E6%8F%90%E7%A4%BA%E8%AF%8D/0"
+      "ref": "result://abc-123/%E6%9C%80%E7%BB%88%E6%8F%90%E7%A4%BA%E8%AF%8D/0",
+      "markdown": "a cute cat, masterpiece, best quality..."
     },
     "输出图片": {
       "type": "image",
       "url": "http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output",
-      "ref": "result://abc-123/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0"
+      "ref": "result://abc-123/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0",
+      "markdown": "![输出图片](http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output)"
     }
   }
 }
@@ -199,7 +201,7 @@ AI 助手通过 MCP 协议使用以下工具：
 }
 ```
 
-- 单个媒体输出只包含 `type`、`url`、`ref`；单个文本输出只包含 `type`、`value`、`ref`
+- 单个媒体输出包含 `type`、`url`、`ref`、`markdown`；单个文本输出包含 `type`、`value`、`ref`、`markdown`
 - `ref` 是不透明输出引用，可直接放入下一次调用的 `bindings`，AI 不需要关注节点 ID、文件名或 ComfyUI 存储信息
 
 ##### 使用 Binding 串联模板（推荐）

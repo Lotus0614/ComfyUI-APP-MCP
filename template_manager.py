@@ -681,7 +681,6 @@ def list_public_templates() -> list[dict]:
             templates.append({
                 "name": template.get("name", path.stem),
                 "title": template.get("title") or template.get("description", ""),
-                "description": template.get("description", ""),
             })
         except Exception as e:
             logger.warning(f"Failed to load template {path}: {e}")
@@ -1164,6 +1163,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                     "type": "text",
                     "value": texts[0],
                     "ref": _build_output_ref("result", prompt_id, public_name, 0),
+                    "markdown": str(texts[0]),
                 }
             else:
                 public_result = {
@@ -1175,6 +1175,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                         }
                         for index, text in enumerate(texts)
                     ],
+                    "markdown": "\n".join(str(text) for text in texts),
                 }
         if media_urls:
             public_items = [
@@ -1189,6 +1190,13 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                 "type": f"{public_items[0]['type']}_list",
                 "items": public_items,
             }
+            first_media = public_items[0]
+            media_type = first_media.get("type", "media")
+            media_url = first_media.get("url", "")
+            if media_type in ("image", "gif"):
+                public_result["markdown"] = f"![{public_name}]({media_url})"
+            elif media_type == "audio":
+                public_result["markdown"] = f"[{public_name}]({media_url})"
 
         result[public_name] = public_result
         binding_outputs[public_name] = binding_result

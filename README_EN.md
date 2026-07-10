@@ -2,7 +2,7 @@
 
 [中文](./README.md) | [English](./README_EN.md)
 
-A ComfyUI plugin that wraps ComfyUI apps as MCP-callable templates, so AI assistants can use ComfyUI as a multimedia capability service that is queryable, executable, and chainable. If you find bugs or have feature requests, join the QQ group: 1082160486, or open an issue.
+A ComfyUI plugin that wraps ComfyUI apps as MCP-callable templates, so AI assistants can use ComfyUI as a multimedia capability service that is queryable, executable, and chainable.
 
 Key capabilities:
 
@@ -30,24 +30,24 @@ Key capabilities:
 
 This plugin depends on the following Python packages:
 
-| Package   | Version     | Purpose                                    |
-| --------- | ----------- | ------------------------------------------ |
-| `fastmcp` | >= 1.0.0    | MCP protocol framework                     |
-| `uvicorn` | >= 0.30.0   | ASGI server                                |
-| `httpx`   | >= 0.27.0   | HTTP client for communicating with ComfyUI |
+| Package   | Version   | Purpose                                    |
+| --------- | --------- | ------------------------------------------ |
+| `fastmcp` | >= 1.0.0  | MCP protocol framework                     |
+| `uvicorn` | >= 0.30.0 | ASGI server                                |
+| `httpx`   | >= 0.27.0 | HTTP client for communicating with ComfyUI |
 
 ### Installation
 
 ### Environment Variables
 
-| Variable             | Default                 | Description                                                                 |
-| -------------------- | ----------------------- | --------------------------------------------------------------------------- |
-| `COMFYUI_URL`        | `http://127.0.0.1:8188` | ComfyUI server URL                                                          |
-| `COMFYUI_PUBLIC_URL` | Same as `COMFYUI_URL`   | Optional advanced setting; used for media links when the media proxy is off |
-| `MCP_CONFIG`         | Empty                   | JSON config file path for standalone mode                                   |
-| `MCP_TEMPLATE_DIR`   | `./templates`           | Template JSON directory                                                     |
-| `MCP_HOST`           | `0.0.0.0`               | MCP server bind host                                                        |
-| `MCP_PORT`           | `8189`                  | MCP server port                                                             |
+| Variable             | Default                 | Description                                                                        |
+| -------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| `COMFYUI_URL`        | `http://127.0.0.1:8188` | ComfyUI server URL                                                                 |
+| `COMFYUI_PUBLIC_URL` | Same as `COMFYUI_URL`   | Optional advanced setting; used for media links when the media proxy is off        |
+| `MCP_CONFIG`         | Empty                   | JSON config file path for standalone mode                                          |
+| `MCP_TEMPLATE_DIR`   | `./templates`           | Template JSON directory                                                            |
+| `MCP_HOST`           | `0.0.0.0`               | MCP server bind host                                                               |
+| `MCP_PORT`           | `8189`                  | MCP server port                                                                    |
 | `MCP_MEDIA_PROXY`    | `true`                  | Whether media links use the MCP `/view` proxy when accessing the MCP port directly |
 
 ### Standalone Configuration
@@ -128,7 +128,7 @@ AI assistants can use the following MCP tools:
 
 #### `list_templates`
 
-Lists all available templates with only their names, titles, and short descriptions. Disabled templates are excluded.
+Lists all available templates with only their names and titles. Disabled templates are excluded.
 
 #### `get_template(name)`
 
@@ -175,12 +175,14 @@ On success, returns a clean structured result:
     "final_prompt": {
       "type": "text",
       "value": "a cute cat, masterpiece, best quality...",
-      "ref": "result://abc-123/final_prompt/0"
+      "ref": "result://abc-123/final_prompt/0",
+      "markdown": "a cute cat, masterpiece, best quality..."
     },
     "output_image": {
       "type": "image",
       "url": "http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output",
-      "ref": "result://abc-123/output_image/0"
+      "ref": "result://abc-123/output_image/0",
+      "markdown": "![output_image](http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output)"
     }
   }
 }
@@ -199,7 +201,7 @@ If waiting times out, the result looks like:
 }
 ```
 
-- A single media output contains only `type`, `url`, and `ref`; a single text output contains only `type`, `value`, and `ref`
+- A single media output contains `type`, `url`, `ref`, and `markdown`; a single text output contains `type`, `value`, `ref`, and `markdown`
 - `ref` is an opaque output reference that can be passed directly into the next call's `bindings`
 
 ##### Using Bindings to Chain Templates (Recommended)
@@ -412,6 +414,7 @@ If it's a template-generated image, use the output `ref` for chaining instead of
 ### Binding fails
 
 If binding returns an error, check:
+
 1. The reference uses a valid `result://` (`run_template`) or `step://` (`run_templates`) format
 2. `output` exists in the source result's `outputs`
 3. `index` is within range

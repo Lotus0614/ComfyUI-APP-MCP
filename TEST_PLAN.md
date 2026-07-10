@@ -20,7 +20,7 @@
 
 **验证点：**
 - [ ] 返回 JSON 包含 `templates` 数组
-- [ ] 每个模板只有 `name`、`title`、`description`
+- [ ] 每个模板只有 `name`、`title`
 - [ ] 已禁用的模板不出现在列表中
 - [ ] 模板数量 > 0
 
@@ -104,6 +104,7 @@
 - [ ] `status` 为 `"completed"`
 - [ ] 完成结果顶层不包含 `prompt_id` 或 `run_id`
 - [ ] `outputs` 中至少有一个输出包含 `type`、`url`、`ref`
+- [ ] 图片/音频输出包含 `markdown`
 - [ ] `ref` 使用 `result://` 协议
 - [ ] `url` 可以在浏览器中打开并显示图片
 - [ ] 返回结果不包含 `binding_hint`、`filename`、`subfolder`、`item_type`
@@ -341,10 +342,10 @@
 对任意 `run_template` 或 `get_template_result` 的返回结果：
 
 **验证点：**
-- [ ] 单个媒体输出只有 `type`、`url`、`ref`
-- [ ] 单个文本输出只有 `type`、`value`、`ref`
+- [ ] 单个媒体输出包含 `type`、`url`、`ref`、`markdown`
+- [ ] 单个文本输出包含 `type`、`value`、`ref`、`markdown`
 - [ ] 多值输出使用 `items`，每个元素带自己的 `ref`
-- [ ] 无 `output_name`、`node_id`、`title`、`filename`、`subfolder`、`item_type`、`markdown`
+- [ ] 无 `output_name`、`node_id`、`title`、`filename`、`subfolder`、`item_type`
 - [ ] 输出名称不包含节点 ID
 
 ### 5.2 ref 格式
