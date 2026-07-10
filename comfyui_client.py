@@ -1,5 +1,8 @@
 """ComfyUI API client — wraps HTTP endpoints used by the MCP server."""
 
+from pathlib import Path
+from uuid import uuid4
+
 import httpx
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8188"
@@ -116,13 +119,15 @@ class ComfyUIClient:
             resp.raise_for_status()
             return resp.content
 
-    async def upload_image_bytes(self, filename: str, image_bytes: bytes, overwrite: bool = True) -> dict:
+    async def upload_image_bytes(self, filename: str, image_bytes: bytes) -> dict:
+        suffix = Path(filename).suffix.lower() or ".png"
+        upload_name = f"mcp_{uuid4().hex}{suffix}"
         async with httpx.AsyncClient(trust_env=False) as client:
             resp = await client.post(
                 f"{self.base_url}/upload/image",
                 headers=self.headers,
-                files={"image": (filename, image_bytes)},
-                data={"overwrite": str(overwrite).lower()},
+                files={"image": (upload_name, image_bytes)},
+                data={"overwrite": "false"},
                 timeout=60,
             )
             if resp.status_code != 200:

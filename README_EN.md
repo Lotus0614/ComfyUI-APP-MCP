@@ -255,7 +255,7 @@ Runs multiple templates sequentially and binds outputs from earlier steps into l
 
 On failure, the tool returns the failed step and step statuses. On success, it returns a concise step status list and the final outputs.
 
-#### `upload_image(source, overwrite=true)`
+#### `upload_image(source)`
 
 Uploads an image to ComfyUI for use as an image input.
 
@@ -267,7 +267,7 @@ Supported sources:
 - **HTTP URL**: `https://example.com/image.png`
 - **Base64**: `data:image/png;base64,iVBOR...`
 
-The upload returns a filename that can be used as a template parameter.
+The upload preserves the original extension but generates a unique filename such as `mcp_4b2f...a91c.png`, so identical source names never overwrite each other. The returned `name` can be used as a template parameter.
 
 #### `list_models(folder="", keywords="")`
 
@@ -371,7 +371,7 @@ All MCP calls are printed in the ComfyUI console with the `[MCP]` prefix:
 ```text
 [MCP] list_templates() → 3 templates
 [MCP] run_template(name='txt2img', params={"positive_prompt": "a cat"}) → completed
-[MCP] upload_image(source=E:/photos/input.png) → {"name": "input.png", "subfolder": "", "type": "input"}
+[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_4b2f...a91c.png", "subfolder": "", "type": "input"}
 ```
 
 Proxy requests are printed with the `[MCP Proxy]` prefix:

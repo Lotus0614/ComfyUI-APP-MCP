@@ -781,7 +781,7 @@ async def _upload_media_to_input(media_item: dict) -> dict:
     item_type = media_item.get("item_type", "output")
     client = _comfyui_client()
     image_bytes = await client.download_view(filename, subfolder=subfolder, file_type=item_type)
-    return await client.upload_image_bytes(filename or "pipeline_input.png", image_bytes, overwrite=True)
+    return await client.upload_image_bytes(filename or "pipeline_input.png", image_bytes)
 
 
 async def _resolve_binding_value(outputs: dict, output_name: str, index: int):
