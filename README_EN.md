@@ -128,7 +128,7 @@ AI assistants can use the following MCP tools:
 
 #### `list_templates`
 
-Lists all available templates and returns template name, title, and input/output counts. Disabled templates are excluded.
+Lists all available templates with only their names, titles, and short descriptions. Disabled templates are excluded.
 
 #### `get_template(name)`
 
@@ -136,8 +136,8 @@ Returns template details including:
 
 - `title`: template title, extracted from the workflow `title` Markdown node
 - `description`: detailed description, extracted from the workflow `description` Markdown node
-- `inputs`: configurable input parameters, including name, type, and default value. Inputs named `seed` are automatically randomized at runtime and are not returned to AI clients by MCP `get_template`.
-- `outputs`: output node definitions
+- `inputs`: public parameters containing only types, defaults, and useful constraints. Internal fields such as `node_id`, `api_key`, and `widget` are not returned. Inputs named `seed` are randomized at runtime.
+- `outputs`: stable business output names and types without ComfyUI node IDs
 - `docs`: doc title list readable through `read_template_doc(name, title)`
 
 Disabled templates cannot be queried.
@@ -158,7 +158,7 @@ Executes a template with parameter values.
 - `name`: template name
 - `params`: JSON string of parameter values, for example `'{"positive_prompt": "a cat"}'`. If the template contains an input named `seed`, the runtime injects a random seed automatically.
 - `wait`: whether to wait for completion, defaults to `true`
-- `bindings`: optional JSON string used to pull values from a previous result and inject them into current parameters
+- `bindings`: optional JSON string mapping input names to previous `result://` output references
 
 When `wait=true`, the default wait timeout is controlled by **Settings → MCP Server → Execution → Run Template Timeout** in the ComfyUI frontend. The default is `120` seconds.
 
@@ -171,30 +171,16 @@ On success, returns a clean structured result:
 ```json
 {
   "status": "completed",
-  "prompt_id": "abc-123",
   "outputs": {
-    "final_prompt_119_STRING": {
-      "text": ["a cute cat, masterpiece, best quality..."]
+    "final_prompt": {
+      "type": "text",
+      "value": "a cute cat, masterpiece, best quality...",
+      "ref": "result://abc-123/final_prompt/0"
     },
-    "output_image_122_output": {
-      "media": [
-        {
-          "url": "http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output",
-          "type": "image",
-          "filename": "output.png",
-          "subfolder": "prompt_gallery",
-          "item_type": "output"
-        }
-      ],
-      "markdown": "![output_image_122_output](http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output)"
-    }
-  },
-  "binding_hint": {
-    "output_image_122_output": {
-      "from": "abc-123",
-      "output": "output_image_122_output",
+    "output_image": {
       "type": "image",
-      "index": 0
+      "url": "http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output",
+      "ref": "result://abc-123/output_image/0"
     }
   }
 }
@@ -205,30 +191,30 @@ If waiting times out, the result looks like:
 ```json
 {
   "status": "timeout",
-  "prompt_id": "abc-123",
+  "run_id": "abc-123",
   "template": "anima mcp.app",
   "outputs": {},
   "error": "Timed out after 120s",
-  "continue_hint": "Use get_template_result(name, prompt_id, wait=true) to continue waiting for the same prompt."
+  "continue_hint": "Use get_template_result(name, run_id, wait=true) to continue waiting for the same prompt."
 }
 ```
 
-- `outputs`: simplified output containing only `media` (media items), `text` (text content), and `markdown` (ready-to-render Markdown)
-- `binding_hint`: auto-generated binding config that can be copied directly into the next call's `bindings` parameter
+- A single media output contains only `type`, `url`, and `ref`; a single text output contains only `type`, `value`, and `ref`
+- `ref` is an opaque output reference that can be passed directly into the next call's `bindings`
 
 ##### Using Bindings to Chain Templates (Recommended)
 
 **Important: When processing template-generated images, you MUST use bindings. Do NOT upload manually!**
 
-Each `run_template` result includes a `binding_hint` field. To chain templates, copy the value from `binding_hint` directly into the next call's `bindings` parameter:
+Each output includes a `ref`. To chain templates, pass that string directly into the next call's `bindings` parameter:
 
 ```python
 # Step 1: Generate image
 result1 = run_template("anima mcp.app", '{"prompt": "a cute cat"}')
-# result1.binding_hint = {"output_image": {"from": "abc-123", ...}}
+# result1.outputs["output_image"].ref = "result://abc-123/output_image/0"
 
-# Step 2: Encrypt (use binding_hint directly)
-result2 = run_template("encrypt.app", '{}', bindings='{"image": {"from": "abc-123", "output": "output_image_122_output", "type": "image", "index": 0}}')
+# Step 2: Encrypt (use the ref directly)
+result2 = run_template("encrypt.app", '{}', bindings='{"image": "result://abc-123/output_image/0"}')
 ```
 
 `upload_image` is only for new images provided by the user (not generated by templates).
@@ -256,12 +242,7 @@ Runs multiple templates sequentially and binds outputs from earlier steps into l
         "scale": 2
       },
       "bindings": {
-        "image": {
-          "from": "generate",
-          "output": "SaveImage_12_output",
-          "type": "image",
-          "index": 0
-        }
+        "image": "step://generate/output_image/0"
       }
     }
   ]
@@ -269,21 +250,16 @@ Runs multiple templates sequentially and binds outputs from earlier steps into l
 ```
 
 - `timeout_per_step`: timeout in seconds for each step, default `300`
-- Supported binding `type` values:
-  - `text`: read `text[index]` from the upstream output
-  - `image`: re-upload upstream image media into ComfyUI input storage, then pass the returned filename
-  - `media_filename`: pass the upstream media filename directly
-  - `media_url`: pass the upstream media URL directly
+- Inside a pipeline, use `step://<step-id>/<output>/<index>` to reference an earlier step
+- In a normal `run_template` call, use the `result://` ref returned by the previous execution
 
-Here, `from` refers to a pipeline step `id`; in `run_template(..., bindings=...)`, `from` refers to a historical `prompt_id`.
-
-On failure, the tool returns the failed step and all completed step results. On success, it returns the full step list, the final step outputs, and `binding_hint` (where `from` is the step `id`).
+On failure, the tool returns the failed step and step statuses. On success, it returns a concise step status list and the final outputs.
 
 #### `upload_image(source, overwrite=true)`
 
 Uploads an image to ComfyUI for use as an image input.
 
-**Note: Only for new images provided by the user!** When processing template-generated images, use `binding_hint` instead of manual upload.
+**Note: Only for new images provided by the user!** When processing template-generated images, use the output `ref` instead of manual upload.
 
 Supported sources:
 
@@ -301,12 +277,12 @@ Lists ComfyUI model folders or models inside a specific folder.
 - With `folder`: returns models in that directory, such as `checkpoints`, `loras`, `vae`, or `controlnet`
 - `keywords`: optional search keywords, case-insensitive, multiple keywords separated by spaces act as AND conditions, e.g. `keywords="sdxl"` or `keywords="detail anime"`
 
-#### `get_template_result(name, prompt_id, wait=false, timeout=300)`
+#### `get_template_result(name, run_id, wait=false, timeout=300)`
 
 Fetches execution results.
 
 - `wait=false`: return the current status immediately (`pending`, `running`, `completed`) for manual polling
-- `wait=true`: block until completion or timeout. If the `prompt_id` does not exist (not in queue or history), returns an error within a few seconds instead of waiting until timeout
+- `wait=true`: block until completion or timeout. If the `run_id` does not exist (not in queue or history), returns an error within a few seconds instead of waiting until timeout
 - `timeout`: wait timeout in seconds, default `300`
 
 ## ComfyUI Frontend Management
@@ -314,7 +290,7 @@ Fetches execution results.
 In **Settings → MCP Server**:
 
 - **Status**: view MCP server status and connection address
-- **Execution → Run Template Timeout**: set the default wait timeout for `run_template(wait=true)`, default `120` seconds; after timeout, call `get_template_result(name, prompt_id, wait=true)` to continue waiting
+- **Execution → Run Template Timeout**: set the default wait timeout for `run_template(wait=true)`, default `120` seconds; after timeout, call `get_template_result(name, run_id, wait=true)` to continue waiting
 - **Templates**: view, refresh, disable or enable, and delete templates
 - **Auto Extract Templates**: scan all workflows and auto-create templates for those with a `title` Markdown node that don't have a template yet
 - **Batch Refresh Templates**: refresh all templates from their source workflows, re-extracting inputs, outputs, title, and description
@@ -431,12 +407,12 @@ Make sure ComfyUI was started with `--listen`. The plugin already disables MCP D
 
 If it's a new image provided by the user, call `upload_image` first and use the returned filename as the template parameter.
 
-If it's a template-generated image, use `binding_hint` for chaining instead of manual upload.
+If it's a template-generated image, use the output `ref` for chaining instead of manual upload.
 
 ### Binding fails
 
 If binding returns an error, check:
-1. `from` is a valid `prompt_id` (`run_template`) or step `id` (`run_templates`)
+1. The reference uses a valid `result://` (`run_template`) or `step://` (`run_templates`) format
 2. `output` exists in the source result's `outputs`
 3. `index` is within range
 

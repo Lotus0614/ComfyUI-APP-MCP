@@ -20,7 +20,7 @@
 
 **验证点：**
 - [ ] 返回 JSON 包含 `templates` 数组
-- [ ] 每个模板有 `name`、`title`、`disabled`、`input_count`、`output_count`
+- [ ] 每个模板只有 `name`、`title`、`description`
 - [ ] 已禁用的模板不出现在列表中
 - [ ] 模板数量 > 0
 
@@ -32,8 +32,10 @@
 
 **验证点：**
 - [ ] 返回 JSON 包含 `name`、`description`、`inputs`、`outputs`、`docs`
-- [ ] `inputs` 是 dict，每个输入有 `node_id`、`widget`、`type`、`default`
-- [ ] `outputs` 是 dict，每个输出有 `node_id`、`type`、`title`
+- [ ] `inputs` 是 dict，每个输入只有公共字段，如 `type`、`default`、`options`、`min`、`max`、`step`
+- [ ] `outputs` 是 dict，每个输出只有 `type`
+- [ ] 整个结果不包含 `node_id`、`api_key`、`widget`、`comfy_type`
+- [ ] 输出名称不包含自动附加的节点 ID
 - [ ] `docs` 是数组，包含所有可通过 `read_template_doc(name, title)` 读取的 MarkdownNote 标题
 - [ ] description 不为空
 
@@ -98,15 +100,13 @@
 ```
 
 **验证点：**
-- [ ] 返回 JSON 包含 `status`、`prompt_id`、`outputs`
+- [ ] 返回 JSON 包含 `status`、`outputs`
 - [ ] `status` 为 `"completed"`
-- [ ] `prompt_id` 是有效 UUID 字符串
-- [ ] `outputs` 中至少有一个输出包含 `media` 数组
-- [ ] `media` 数组中每个元素有 `url`、`type`、`filename`
+- [ ] 完成结果顶层不包含 `prompt_id` 或 `run_id`
+- [ ] `outputs` 中至少有一个输出包含 `type`、`url`、`ref`
+- [ ] `ref` 使用 `result://` 协议
 - [ ] `url` 可以在浏览器中打开并显示图片
-- [ ] 返回结果包含 `binding_hint` 字段
-- [ ] `binding_hint` 中每个条目有 `from`、`output`、`type`、`index`
-- [ ] `binding_hint.from` 等于 `prompt_id`
+- [ ] 返回结果不包含 `binding_hint`、`filename`、`subfolder`、`item_type`
 
 ### 2.2 异步执行（wait=false）+ get_template_result
 
@@ -121,13 +121,13 @@
 **验证点：**
 - [ ] 返回立即，不阻塞
 - [ ] `status` 为 `"queued"`
-- [ ] 包含有效的 `prompt_id`
+- [ ] 包含有效的 `run_id`
 - [ ] `outputs` 为空（未完成）
 
 ```
 调用: get_template_result(
   name="anima mcp.app",
-  prompt_id="<上一步的 prompt_id>",
+  run_id="<上一步的 run_id>",
   wait=true
 )
 ```
@@ -136,13 +136,13 @@
 - [ ] 阻塞直到完成
 - [ ] `status` 为 `"completed"`
 - [ ] `outputs` 包含生成的媒体
-- [ ] 包含 `binding_hint`
+- [ ] 输出包含 `result://` 引用
 
 ### 2.3 get_template_result — 轮询模式
 
 ```
 调用: run_template(name="anima mcp.app", params='{"提示词": "..."}', wait=false)
-循环调用: get_template_result(name="anima mcp.app", prompt_id="...", wait=false)
+循环调用: get_template_result(name="anima mcp.app", run_id="...", wait=false)
 ```
 
 **验证点：**
@@ -167,15 +167,15 @@
 
 ## 三、Binding（跨模板）
 
-### 3.1 使用 binding_hint 进行放大
+### 3.1 使用 result ref 进行放大
 
 ```
 步骤1: run_template(name="anima mcp.app", params='{"提示词": "a cute anime girl"}')
-步骤2: 使用步骤1返回的 binding_hint，调用:
+步骤2: 使用步骤1输出的 `ref`，调用:
   run_template(
     name="anima 放大 mcp.app",
     params='{"降噪": 0.3}',
-    bindings='{"输入图片": <binding_hint 中的配置>}'
+    bindings='{"输入图片": "result://<run-id>/<输出名>/0"}'
   )
 ```
 
@@ -183,14 +183,14 @@
 - [ ] 步骤2 不需要手动上传图片
 - [ ] 步骤2 执行成功
 - [ ] 输出图片分辨率大于原图
-- [ ] 步骤2 返回新的 `binding_hint`
+- [ ] 步骤2 输出包含新的 `ref`
 
 ### 3.2 使用 binding 进行加密
 
 ```
 步骤1: run_template(name="anima mcp.app", params='{"提示词": "...", "加速Lora强度": 1, "采样cfg": 1, "采样步数": 10}')
-步骤2: 使用 binding_hint，调用:
-  run_template(name="图片加密.app", params='{}', bindings='{"image": <binding_hint>}')
+步骤2: 使用输出 ref，调用:
+  run_template(name="图片加密.app", params='{}', bindings='{"image": "result://<run-id>/<输出名>/0"}')
 ```
 
 **验证点：**
@@ -202,29 +202,22 @@
 ```
 步骤1: 生成图片
 步骤2: 加密（使用 binding）
-步骤3: 解密（使用步骤2 的 binding_hint）
+步骤3: 解密（使用步骤2 的输出 ref）
 ```
 
 **验证点：**
 - [ ] 解密后的图片与原图一致
 - [ ] 三步都执行成功
 
-### 3.4 手动构造 binding（不用 binding_hint）
+### 3.4 手动构造 result ref
 
 ```
-步骤1: run_template(...) 获取 prompt_id
-步骤2: 手动构造 binding:
-  {
-    "from": "<prompt_id>",
-    "output": "<outputs 中的 key>",
-    "type": "image",
-    "index": 0
-  }
+步骤1: run_template(...) 获取输出名和 ref 格式
+步骤2: 手动构造 `result://<run-id>/<输出名>/<索引>`
 ```
 
 **验证点：**
-- [ ] 手动构造的 binding 也能正常工作
-- [ ] 不需要 `source_outputs`（因为 `mcp_outputs` 已缓存）
+- [ ] 手动构造的 ref 能正常工作
 
 ---
 
@@ -245,12 +238,7 @@
       "template": "anima 放大 mcp.app",
       "params": {"降噪": 0.3},
       "bindings": {
-        "输入图片": {
-          "from": "generate",
-          "output": "输出图片_122_output",
-          "type": "image",
-          "index": 0
-        }
+        "输入图片": "step://generate/<输出名>/0"
       }
     }
   ]
@@ -258,13 +246,12 @@
 ```
 
 **验证点：**
-- [ ] 返回 `{"status": "completed", "steps": [...], "final": {...}}`
+- [ ] 返回 `{"status": "completed", "steps": [...], "outputs": {...}}`
 - [ ] `steps` 数组有 2 个元素
-- [ ] 每个 step 有 `id`、`template`、`params`、`status`、`prompt_id`、`outputs`
+- [ ] 每个 step 只有 `id`、`template`、`status`
 - [ ] 所有 step 的 `status` 为 `"completed"`
-- [ ] `final` 包含最后一步的 outputs
-- [ ] 返回结果包含 `binding_hint`
-- [ ] `binding_hint.from` 是步骤 id（不是 prompt_id）
+- [ ] 顶层 `outputs` 是最后一步输出
+- [ ] 结果不包含 `final`、`binding_hint`、步骤 `params`、步骤 `prompt_id`
 
 ### 4.2 两步流水线：生成 + 加密
 
@@ -280,12 +267,7 @@
       "id": "encrypt",
       "template": "图片加密.app",
       "bindings": {
-        "image": {
-          "from": "generate",
-          "output": "输出图片_122_output",
-          "type": "image",
-          "index": 0
-        }
+        "image": "step://generate/<输出名>/0"
       }
     }
   ]
@@ -302,8 +284,8 @@
 调用: run_templates(pipeline='{
   "steps": [
     {"id": "generate", "template": "anima mcp.app", "params": {"提示词": "..."}},
-    {"id": "encrypt", "template": "图片加密.app", "bindings": {"image": {"from": "generate", "output": "输出图片_122_output", "type": "image", "index": 0}}},
-    {"id": "decrypt", "template": "图片解密.app", "bindings": {"image": {"from": "encrypt", "output": "PreviewImage_3_output", "type": "image", "index": 0}}}
+    {"id": "encrypt", "template": "图片加密.app", "bindings": {"image": "step://generate/<输出名>/0"}},
+    {"id": "decrypt", "template": "图片解密.app", "bindings": {"image": "step://encrypt/<输出名>/0"}}
   ]
 }')
 ```
@@ -359,29 +341,28 @@
 对任意 `run_template` 或 `get_template_result` 的返回结果：
 
 **验证点：**
-- [ ] `outputs` 中每个输出只有 `media` 字段（无 `images`、`audio`、`gifs` 原始数据）
-- [ ] `media` 中每个元素只有 `url`、`type`、`filename`、`subfolder`、`item_type`
-- [ ] 无 `output_name`、`node_id`、`title` 等冗余字段
-- [ ] 图片/音频输出包含 `markdown` 字段，格式为 `![名称](url)` 或 `[🔊 名称](url)`
-- [ ] 文本输出包含 `text` 字段
+- [ ] 单个媒体输出只有 `type`、`url`、`ref`
+- [ ] 单个文本输出只有 `type`、`value`、`ref`
+- [ ] 多值输出使用 `items`，每个元素带自己的 `ref`
+- [ ] 无 `output_name`、`node_id`、`title`、`filename`、`subfolder`、`item_type`、`markdown`
+- [ ] 输出名称不包含节点 ID
 
-### 5.2 binding_hint 格式
+### 5.2 ref 格式
 
 对任意执行成功的返回结果：
 
 **验证点：**
-- [ ] 存在 `binding_hint` 字段
-- [ ] `binding_hint` 是 dict，key 与 `outputs` 中有 media 的输出名对应
-- [ ] 每个 binding 有 `from`、`output`、`type`、`index`
-- [ ] `type` 值为 `"image"`、`"audio"`、`"gif"` 之一
-- [ ] `index` 为 `0`
+- [ ] 每个输出值包含 `ref`
+- [ ] 普通执行输出使用 `result://<run-id>/<输出名>/<索引>`
+- [ ] `ref` 中的输出名经过 URL 编码
+- [ ] 不存在 `binding_hint`
 
 ### 5.3 run_templates 输出格式
 
 **验证点：**
-- [ ] 顶层有 `status`、`steps`、`final`
-- [ ] 成功时有 `binding_hint`，失败时无
-- [ ] `binding_hint.from` 是步骤 id（字符串），不是 prompt_id
+- [ ] 顶层有 `status`、`steps`、`outputs`
+- [ ] `steps` 只记录步骤 id、模板名和状态
+- [ ] 不存在 `final` 或 `binding_hint`
 
 ---
 
@@ -457,31 +438,31 @@
 **验证点：**
 - [ ] 返回 `{"error": "Invalid pipeline JSON: ..."}`
 
-### 7.4 binding 引用不存在的 prompt_id
+### 7.4 result ref 引用不存在的 run_id
 
 ```
 调用: run_template(
   name="anima 放大 mcp.app",
   params='{}',
-  bindings='{"输入图片": {"from": "不存在的id", "output": "xxx", "type": "image", "index": 0}}'
+  bindings='{"输入图片": "result://不存在的id/xxx/0"}'
 )
 ```
 
 **验证点：**
 - [ ] 返回错误信息包含 "not found"
 
-### 7.5 binding 引用不存在的 output
+### 7.5 result ref 引用不存在的 output
 
 ```
 调用: run_template(
   name="anima 放大 mcp.app",
   params='{}',
-  bindings='{"输入图片": {"from": "<有效prompt_id>", "output": "不存在的output", "type": "image", "index": 0}}'
+  bindings='{"输入图片": "result://<有效run-id>/不存在的output/0"}'
 )
 ```
 
 **验证点：**
-- [ ] 返回错误信息包含 "not found in source"
+- [ ] 返回错误信息包含 "not found"
 
 ### 7.6 binding index 越界
 
@@ -489,7 +470,7 @@
 调用: run_template(
   name="anima 放大 mcp.app",
   params='{}',
-  bindings='{"输入图片": {"from": "<有效prompt_id>", "output": "<有效output>", "type": "image", "index": 999}}'
+  bindings='{"输入图片": "result://<有效run-id>/<有效output>/999"}'
 )
 ```
 
@@ -505,11 +486,11 @@
 - [ ] `list_templates()` 返回模板列表
 - [ ] `get_template("anima mcp.app")` 返回模板详情
 - [ ] `run_template("anima mcp.app", '{"提示词": "test"}')` 生成图片成功
-- [ ] 返回结果包含 `binding_hint`
+- [ ] 返回结果包含 `result://` 输出引用
 - [ ] 返回结果中 `outputs` 无冗余字段
-- [ ] 用 `binding_hint` 执行放大模板成功
+- [ ] 用输出 `ref` 执行放大模板成功
 - [ ] `run_templates` 两步流水线成功
-- [ ] 流水线返回 `binding_hint`（from 为步骤 id）
+- [ ] 流水线使用 `step://` 引用并仅返回最终输出
 
 ---
 

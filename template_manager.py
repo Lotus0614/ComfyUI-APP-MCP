@@ -6,6 +6,8 @@ import json
 import logging
 import contextvars
 import random
+import re
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
@@ -24,8 +26,7 @@ _comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar
     "_comfyui_public_url", default=None
 )
 
-# Module-level cache for mcp_outputs, keyed by prompt_id.
-# Allows cross-call binding resolution without requiring source_outputs.
+# Module-level cache for public output bindings, keyed by prompt_id.
 _mcp_outputs_cache: dict[str, dict] = {}
 
 _SEED_INPUT_NAME = "seed"
@@ -52,7 +53,7 @@ def _build_timeout_result(
         "prompt_id": prompt_id,
         "outputs": {},
         "continue_hint": (
-            "Use get_template_result(name, prompt_id, wait=true) "
+            "Use get_template_result(name, run_id, wait=true) "
             "to continue waiting for the same prompt."
         ),
     }
@@ -79,6 +80,97 @@ async def _get_node_definitions() -> dict:
 
 def _ensure_dir():
     config.get_template_dir().mkdir(parents=True, exist_ok=True)
+
+
+def _public_value_type(value_type: str) -> str:
+    """Map ComfyUI/template types to a small AI-facing type set."""
+    normalized = str(value_type or "").upper()
+    return {
+        "INT": "integer",
+        "FLOAT": "number",
+        "STRING": "string",
+        "BOOLEAN": "boolean",
+        "COMBO": "string",
+        "IMAGE": "image",
+        "LATENT": "image",
+        "AUDIO": "audio",
+        "TEXT": "text",
+    }.get(normalized, str(value_type or "string").lower())
+
+
+def _clean_public_name(value: str) -> str:
+    """Remove generated node-id fragments from an AI-facing name."""
+    name = str(value or "").strip()
+    name = re.sub(r"_\d+_(?:output|out|STRING|TEXT|IMAGE|AUDIO|LATENT)$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"_\d+$", "", name)
+    return name.strip(" _-")
+
+
+def build_public_output_names(outputs: dict) -> dict[str, str]:
+    """Return stable, node-id-free aliases for configured outputs."""
+    aliases = {}
+    used = set()
+    for internal_name, output_meta in outputs.items():
+        title = _clean_public_name(output_meta.get("title", ""))
+        fallback = _clean_public_name(internal_name)
+        output_type = _public_value_type(output_meta.get("type", "output"))
+        base = title or fallback or output_type or "output"
+        alias = base
+        suffix = 2
+        while alias in used:
+            alias = f"{base}_{suffix}"
+            suffix += 1
+        aliases[internal_name] = alias
+        used.add(alias)
+    return aliases
+
+
+def build_public_template_schema(template: dict) -> dict:
+    """Project stored execution metadata into a concise AI-facing schema."""
+    public_inputs = {}
+    for input_name, input_meta in template.get("inputs", {}).items():
+        if input_name == _SEED_INPUT_NAME:
+            continue
+        public_input = {"type": _public_value_type(input_meta.get("type", "string"))}
+        for field in ("default", "options", "min", "max", "step"):
+            if field in input_meta:
+                public_input[field] = input_meta[field]
+        public_inputs[input_name] = public_input
+
+    output_aliases = build_public_output_names(template.get("outputs", {}))
+    public_outputs = {
+        output_aliases[internal_name]: {
+            "type": _public_value_type(output_meta.get("type", "output")),
+        }
+        for internal_name, output_meta in template.get("outputs", {}).items()
+    }
+
+    return {
+        "name": template["name"],
+        "title": template.get("title", ""),
+        "description": template.get("description", ""),
+        "inputs": public_inputs,
+        "outputs": public_outputs,
+        "docs": list_template_docs(template),
+    }
+
+
+def _build_output_ref(scheme: str, source_id: str, output_name: str, index: int) -> str:
+    return f"{scheme}://{quote(str(source_id), safe='')}/{quote(output_name, safe='')}/{index}"
+
+
+def _parse_output_ref(ref: str, expected_scheme: str) -> tuple[str, str, int]:
+    parsed = urlparse(ref)
+    if parsed.scheme != expected_scheme or not parsed.netloc:
+        raise ValueError(f"Expected a {expected_scheme}:// output reference")
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid {expected_scheme} output reference")
+    try:
+        index = int(parts[1])
+    except ValueError as e:
+        raise ValueError(f"Invalid output index in reference '{ref}'") from e
+    return unquote(parsed.netloc), unquote(parts[0]), index
 
 
 # ── Auto-extract from workflow ────────────────────────────
@@ -577,6 +669,25 @@ def list_templates(include_disabled: bool = False) -> list[dict]:
     return templates
 
 
+def list_public_templates() -> list[dict]:
+    """List concise template summaries for AI clients."""
+    _ensure_dir()
+    templates = []
+    for path in sorted(config.get_template_dir().glob("*.json")):
+        try:
+            template = json.loads(path.read_text(encoding="utf-8"))
+            if is_template_disabled(template):
+                continue
+            templates.append({
+                "name": template.get("name", path.stem),
+                "title": template.get("title") or template.get("description", ""),
+                "description": template.get("description", ""),
+            })
+        except Exception as e:
+            logger.warning(f"Failed to load template {path}: {e}")
+    return templates
+
+
 def get_template(name: str) -> dict | None:
     path = config.get_template_dir() / f"{name}.json"
     if not path.exists():
@@ -673,83 +784,45 @@ async def _upload_media_to_input(media_item: dict) -> dict:
     return await client.upload_image_bytes(filename or "pipeline_input.png", image_bytes, overwrite=True)
 
 
-async def _resolve_binding_value(result_sources: dict, binding: dict):
-    """Resolve a binding against previously completed structured results."""
-    from_key = binding.get("from")
-    output_name = binding.get("output")
-    binding_type = binding.get("type")
-    index = int(binding.get("index", 0))
-
-    if from_key not in result_sources:
-        raise ValueError(f"Binding source '{from_key}' not found")
-
-    outputs = result_sources[from_key].get("outputs", {})
+async def _resolve_binding_value(outputs: dict, output_name: str, index: int):
+    """Resolve one public output reference to a template parameter value."""
     if output_name not in outputs:
-        raise ValueError(f"Output '{output_name}' not found in source '{from_key}'")
+        raise ValueError(f"Output '{output_name}' not found")
 
     output_data = outputs[output_name]
-
-    if binding_type == "text":
-        texts = output_data.get("text", [])
+    texts = output_data.get("text", [])
+    if texts:
         if index >= len(texts):
-            raise ValueError(f"Text output index {index} out of range for '{output_name}' in source '{from_key}'")
+            raise ValueError(f"Text output index {index} out of range for '{output_name}'")
         return texts[index]
 
     media = output_data.get("media", [])
     if index >= len(media):
-        raise ValueError(f"Media output index {index} out of range for '{output_name}' in source '{from_key}'")
+        raise ValueError(f"Media output index {index} out of range for '{output_name}'")
 
     media_item = media[index]
-    if binding_type == "media_url":
-        return media_item.get("url", "")
-    if binding_type == "media_filename":
-        return media_item.get("filename", "")
-    if binding_type == "image":
-        if media_item.get("type") not in {"image", "gif"}:
-            raise ValueError(f"Binding '{output_name}' from source '{from_key}' is not an image output")
-        return media_item
-
-    raise ValueError(f"Unsupported binding type '{binding_type}'")
+    if media_item.get("type") in {"image", "gif"}:
+        upload_result = await _upload_media_to_input(media_item)
+        return upload_result.get("name", "")
+    return media_item.get("url", "")
 
 
 async def _resolve_run_bindings(bindings: dict) -> dict:
     if not isinstance(bindings, dict):
         raise ValueError("bindings must be an object")
 
-    result_sources = {}
     resolved_params = {}
-    for param_name, binding in bindings.items():
-        if not isinstance(binding, dict):
-            raise ValueError(f"Binding for param '{param_name}' must be an object")
-        from_key = binding.get("from")
-        if not from_key:
-            raise ValueError(f"Binding for param '{param_name}' requires a non-empty 'from'")
-        if from_key not in result_sources:
-            entry = await _fetch_history_entry(str(from_key))
-            if not entry:
-                raise ValueError(f"Prompt result '{from_key}' not found")
-            source_outputs = binding.get("source_outputs")
-            if isinstance(source_outputs, dict) and source_outputs:
-                result_sources[from_key] = _extract_outputs(entry, source_outputs, str(from_key))
-            else:
-                # Check entry cache first, then module-level cache
-                cached_outputs = entry.get("mcp_outputs") or _mcp_outputs_cache.get(str(from_key))
-                if not isinstance(cached_outputs, dict):
-                    raise ValueError(
-                        f"Prompt result '{from_key}' cannot be used for bindings without source_outputs metadata"
-                    )
-                result_sources[from_key] = {
-                    "status": "completed",
-                    "prompt_id": str(from_key),
-                    "outputs": cached_outputs,
-                }
-
-        resolved_value = await _resolve_binding_value(result_sources, binding)
-        if binding.get("type") == "image":
-            upload_result = await _upload_media_to_input(resolved_value)
-            resolved_params[param_name] = upload_result.get("name", "")
-        else:
-            resolved_params[param_name] = resolved_value
+    for param_name, ref in bindings.items():
+        if not isinstance(ref, str):
+            raise ValueError(f"Binding for param '{param_name}' must be a result:// reference string")
+        prompt_id, output_name, index = _parse_output_ref(ref, "result")
+        outputs = _mcp_outputs_cache.get(prompt_id)
+        if not isinstance(outputs, dict):
+            entry = await _fetch_history_entry(prompt_id)
+            outputs = entry.get("mcp_outputs") if entry else None
+        if not isinstance(outputs, dict):
+            raise ValueError(f"Result '{prompt_id}' is unavailable for binding")
+        resolved_params[param_name] = await _resolve_binding_value(outputs, output_name, index)
     return resolved_params
 
 
@@ -787,15 +860,15 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
 
         resolved_params = dict(params)
         try:
-            for param_name, binding in bindings.items():
-                if not isinstance(binding, dict):
-                    raise ValueError(f"Binding for param '{param_name}' in step '{step_id}' must be an object")
-                resolved_value = await _resolve_binding_value(step_results, binding)
-                if binding.get("type") == "image":
-                    upload_result = await _upload_media_to_input(resolved_value)
-                    resolved_params[param_name] = upload_result.get("name", "")
-                else:
-                    resolved_params[param_name] = resolved_value
+            for param_name, ref in bindings.items():
+                if not isinstance(ref, str):
+                    raise ValueError(f"Binding for param '{param_name}' in step '{step_id}' must be a step:// reference string")
+                source_step, output_name, index = _parse_output_ref(ref, "step")
+                if source_step not in step_results:
+                    raise ValueError(f"Pipeline step '{source_step}' is unavailable for binding")
+                resolved_params[param_name] = await _resolve_binding_value(
+                    step_results[source_step], output_name, index
+                )
         except Exception as e:
             return {
                 "status": "failed",
@@ -808,17 +881,10 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
         step_record = {
             "id": step_id,
             "template": template_name,
-            "params": resolved_params,
             "status": result.get("status", "failed" if result.get("error") else "completed"),
         }
-        if "prompt_id" in result:
-            step_record["prompt_id"] = result["prompt_id"]
-        if "outputs" in result:
-            step_record["outputs"] = result["outputs"]
         if result.get("error"):
             step_record["error"] = result["error"]
-            if "details" in result:
-                step_record["details"] = result["details"]
             completed_steps.append(step_record)
             return {
                 "status": "failed",
@@ -827,42 +893,16 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
                 "steps": completed_steps,
             }
 
-        step_results[step_id] = result
+        prompt_id = result.get("prompt_id", "")
+        step_results[step_id] = _mcp_outputs_cache.get(prompt_id, {})
         completed_steps.append(step_record)
 
-    final_step = completed_steps[-1] if completed_steps else {}
-    final_outputs = final_step.get("outputs", {})
-    final_step_id = final_step.get("id", "")
-
-    # Generate binding_hint for pipeline outputs (uses step id instead of prompt_id)
-    binding_hint = {}
-    for output_name, output_data in final_outputs.items():
-        media = output_data.get("media", [])
-        text = output_data.get("text", [])
-        if media:
-            media_item = media[0]
-            binding_hint[output_name] = {
-                "from": final_step_id,
-                "output": output_name,
-                "type": "image" if media_item.get("type") in ("image", "gif") else media_item.get("type", "image"),
-                "index": 0,
-            }
-        elif text:
-            binding_hint[output_name] = {
-                "from": final_step_id,
-                "output": output_name,
-                "type": "text",
-                "index": 0,
-            }
-
-    result = {
+    final_outputs = result.get("outputs", {}) if completed_steps else {}
+    return {
         "status": "completed",
         "steps": completed_steps,
-        "final": final_outputs,
+        "outputs": final_outputs,
     }
-    if binding_hint:
-        result["binding_hint"] = binding_hint
-    return result
 
 
 async def save_template(name: str, workflow: dict, outputs: dict | None = None, api_prompt: dict | None = None) -> dict:
@@ -1056,6 +1096,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                 node_names[str(nid)] = node_info.get("class_type", f"node_{nid}")
 
     output_meta_by_node_id = {}
+    output_aliases = build_public_output_names(outputs)
     for output_name, output_meta in outputs.items():
         # Match by api_key (the node's key in history, e.g. "150:124" inside a
         # subgraph); fall back to node_id for older templates.
@@ -1064,6 +1105,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
             continue
         output_meta_by_node_id[str(key)] = {
             "output_name": output_name,
+            "public_name": output_aliases.get(output_name, output_name),
             "title": output_meta.get("title", ""),
             "node_id": output_meta.get("node_id"),
         }
@@ -1075,6 +1117,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
         target_node_ids = set(output_data.keys())
 
     result = {}
+    binding_outputs = {}
     for node_id, node_output in output_data.items():
         if not node_output:
             continue
@@ -1082,7 +1125,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
             continue
         output_meta = output_meta_by_node_id.get(node_id, {})
         name = output_meta.get("output_name") or node_names.get(node_id, f"node_{node_id}")
-        node_title = output_meta.get("title") or node_names.get(node_id, f"node_{node_id}")
+        public_name = output_meta.get("public_name") or _clean_public_name(name) or "output"
 
         # Build simplified media entries (images, audio, gifs, etc.)
         media_urls = []
@@ -1107,29 +1150,56 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                     "subfolder": subfolder,
                     "item_type": item_type,
                 })
-        # Build simplified output: keep text, add media, remove raw ComfyUI data
-        node_result = {}
+        binding_result = {}
         if node_output.get("text"):
-            node_result["text"] = node_output["text"]
+            binding_result["text"] = node_output["text"]
         if media_urls:
-            node_result["media"] = media_urls
-            # Generate markdown for easy rendering
-            first_media = media_urls[0]
-            media_url = first_media.get("url", "")
-            media_type = first_media.get("type", "image")
-            if media_type in ("image", "gif"):
-                node_result["markdown"] = f"![{name}]({media_url})"
-            elif media_type == "audio":
-                node_result["markdown"] = f"[🔊 {name}]({media_url})"
-        result[name] = node_result
+            binding_result["media"] = media_urls
+
+        public_result = {}
+        texts = node_output.get("text", [])
+        if texts:
+            if len(texts) == 1:
+                public_result = {
+                    "type": "text",
+                    "value": texts[0],
+                    "ref": _build_output_ref("result", prompt_id, public_name, 0),
+                }
+            else:
+                public_result = {
+                    "type": "text_list",
+                    "items": [
+                        {
+                            "value": text,
+                            "ref": _build_output_ref("result", prompt_id, public_name, index),
+                        }
+                        for index, text in enumerate(texts)
+                    ],
+                }
+        if media_urls:
+            public_items = [
+                {
+                    "type": item.get("type", "media"),
+                    "url": item.get("url", ""),
+                    "ref": _build_output_ref("result", prompt_id, public_name, index),
+                }
+                for index, item in enumerate(media_urls)
+            ]
+            public_result = public_items[0] if len(public_items) == 1 else {
+                "type": f"{public_items[0]['type']}_list",
+                "items": public_items,
+            }
+
+        result[public_name] = public_result
+        binding_outputs[public_name] = binding_result
 
     result_payload = {
         "status": "completed",
         "prompt_id": prompt_id,
         "outputs": result,
     }
-    entry["mcp_outputs"] = result
-    _mcp_outputs_cache[prompt_id] = result
+    entry["mcp_outputs"] = binding_outputs
+    _mcp_outputs_cache[prompt_id] = binding_outputs
     return result_payload
 
 
