@@ -48,7 +48,7 @@ export async function showTemplateDetail(name) {
     `;
 
     if (template.description) {
-        html += `<p style="${S.modalSubtitle};margin-bottom:12px;">${escapeHtml(template.description)}</p>`;
+        html += `<div style="${S.descriptionBox};margin-bottom:12px;">${escapeHtml(template.description)}</div>`;
     }
 
     html += `<div style="${S.section}">${t('inputsParameters')}</div>`;

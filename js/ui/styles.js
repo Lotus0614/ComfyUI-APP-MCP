@@ -61,6 +61,8 @@ export const S = {
         'margin:0;font-size:16px;line-height:1.35;color:#f0f0f0;overflow-wrap:anywhere;',
     modalSubtitle:
         'margin:5px 0 0;color:#a0a0a0;font-size:12px;line-height:1.5;overflow-wrap:anywhere;',
+    descriptionBox:
+        'height:88px;overflow-y:auto;padding:8px 9px;border:1px solid #333;border-radius:7px;background:#1a1a1a;color:#a0a0a0;font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;box-sizing:border-box;',
     modalHeader:
         'display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;',
     footer:

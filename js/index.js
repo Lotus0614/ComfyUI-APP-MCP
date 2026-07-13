@@ -13,15 +13,15 @@ app.registerExtension({
     settings: [
         // Custom widget settings
         {
-            id: 'MCPServer.status.server',
-            name: t('statusSetting'),
-            type: () => createStatusSetting(),
-        },
-        {
             id: 'MCPServer.templates.manager',
             name: t('templatesSetting'),
             tooltip: t('templatesTooltip'),
             type: () => createTemplateSetting(),
+        },
+        {
+            id: 'MCPServer.status.server',
+            name: t('statusSetting'),
+            type: () => createStatusSetting(),
         },
         // Runtime settings (auto-synced to backend via onChange)
         ...RUNTIME_SETTINGS.map((s) => ({

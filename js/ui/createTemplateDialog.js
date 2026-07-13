@@ -9,7 +9,7 @@ function renderWorkflowPreview(info) {
     if (info.description) {
         html += `<div style="${S.previewCard}">`;
         html += `<div style="${S.key};margin-bottom:6px;">${t('description')}</div>`;
-        html += `<div style="${S.mutedText}">${escapeHtml(info.description)}</div>`;
+        html += `<div style="${S.descriptionBox}">${escapeHtml(info.description)}</div>`;
         html += '</div>';
     }
 
