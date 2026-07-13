@@ -19,6 +19,8 @@ const I18N = {
         working: 'Working...',
         exporting: 'Exporting...',
         loading: 'Loading...',
+        searchTemplates: 'Search templates...',
+        templateSummary: '{shown}/{total} templates',
         noTemplates:
             'No templates yet. Click "Create from Workflow" to create one.',
         templateCounts: '{inputs} in / {outputs} out',
@@ -93,6 +95,8 @@ const I18N = {
         working: '处理中...',
         exporting: '导出中...',
         loading: '加载中...',
+        searchTemplates: '搜索模板...',
+        templateSummary: '显示 {shown}/{total} 个模板',
         noTemplates: '暂无模板。点击“从工作流创建”来创建模板。',
         templateCounts: '{inputs} 输入 / {outputs} 输出',
         disabled: '已禁用',

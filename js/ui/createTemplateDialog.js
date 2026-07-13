@@ -2,26 +2,34 @@ import { apiFetch } from '../core/http.js';
 import { t } from '../core/i18n.js';
 import { generateApiPrompt } from '../core/prompt.js';
 import { createModalShell } from './modal.js';
-import { S } from './styles.js';
+import { escapeHtml, mutedText, S } from './styles.js';
 
 function renderWorkflowPreview(info) {
     let html = '';
     if (info.description) {
-        html += `<div style="margin-bottom:4px;"><b>${t('description')}</b> ${info.description}</div>`;
+        html += `<div style="${S.previewCard}">`;
+        html += `<div style="${S.key};margin-bottom:6px;">${t('description')}</div>`;
+        html += `<div style="${S.mutedText}">${escapeHtml(info.description)}</div>`;
+        html += '</div>';
     }
 
     const inputKeys = Object.keys(info.inputs || {});
-    html += `<div><b>${t('autoDetectedInputs', { count: inputKeys.length })}</b> ${inputKeys.join(', ') || t('none')}</div>`;
+    html += `<div style="${S.previewGrid}">`;
+    html += `<div style="${S.previewCard}"><div style="${S.key}">${t('autoDetectedInputs', {
+        count: inputKeys.length,
+    })}</div><div style="${S.mutedText};margin-top:6px;">${escapeHtml(inputKeys.join(', ') || t('none'))}</div></div>`;
 
     const outputEntries = Object.entries(info.outputs || {});
+    let outputHtml = '';
     if (outputEntries.length) {
-        html += `<div><b>${t('autoDetectedOutputs')} (${outputEntries.length}):</b></div>`;
         for (const [outputName, definition] of outputEntries) {
-            html += `<div style="padding-left:12px;color:#8f8;">${outputName} <span style="color:#888;">(${definition.comfy_type || definition.type})</span></div>`;
+            outputHtml += `<div style="margin-top:5px;">${escapeHtml(outputName)} ${mutedText(definition.comfy_type || definition.type)}</div>`;
         }
     } else {
-        html += `<div><b>${t('autoDetectedOutputs')}:</b> ${t('none')}</div>`;
+        outputHtml = mutedText(t('none'));
     }
+    html += `<div style="${S.previewCard}"><div style="${S.key}">${t('autoDetectedOutputs')} (${outputEntries.length})</div><div style="${S.mutedText};margin-top:6px;">${outputHtml}</div></div>`;
+    html += '</div>';
 
     return html;
 }
@@ -39,20 +47,25 @@ export async function showCreateTemplateDialog(onDone) {
     const { overlay, modal, open, close } = shell;
 
     modal.innerHTML = `
-        <h3 style="margin:0 0 14px;font-size:16px;line-height:1.35;">${t('createTemplateFromWorkflow')}</h3>
-        <div style="margin-bottom:10px;">
-            <label style="display:block;font-size:12px;color:#aaa;margin-bottom:5px;">${t('workflow')}</label>
-            <div style="display:flex;gap:8px;align-items:center;position:relative;">
-                <div style="flex:1;position:relative;">
-                    <input id="mcp-wf-search" type="text" placeholder="${t('searchWorkflows')}" style="width:100%;min-height:30px;padding:5px 9px;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:4px;box-sizing:border-box;" autocomplete="off" />
-                    <div id="mcp-wf-dropdown" style="display:none;position:fixed;max-height:240px;overflow-y:auto;background:#2a2a2a;border:1px solid #444;border-radius:4px;z-index:10001;margin-top:2px;"></div>
-                </div>
-                <button id="mcp-wf-refresh" style="${S.btn}font-size:11px;">${t('refresh')}</button>
+        <div style="${S.modalHeader}">
+            <div>
+                <h3 style="${S.modalTitle}">${t('createTemplateFromWorkflow')}</h3>
+                <p style="${S.modalSubtitle}">${t('templatesTooltip')}</p>
             </div>
         </div>
-        <div id="mcp-preview" style="margin:10px 0 0;font-size:12px;color:#aaa;line-height:1.45;min-height:36px;padding:8px;border:1px solid #333;border-radius:6px;background:#202020;box-sizing:border-box;"></div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-            <button id="mcp-save" style="${S.btn}background:#2d5a2d;color:#8f8;" disabled>${t('createTemplate')}</button>
+        <div>
+            <label style="${S.label}">${t('workflow')}</label>
+            <div style="display:flex;gap:8px;align-items:center;position:relative;">
+                <div style="flex:1;position:relative;">
+                    <input id="mcp-wf-search" type="text" placeholder="${t('searchWorkflows')}" style="${S.input}" autocomplete="off" />
+                    <div id="mcp-wf-dropdown" style="${S.dropdown}"></div>
+                </div>
+                <button id="mcp-wf-refresh" style="${S.btn}">${t('refresh')}</button>
+            </div>
+        </div>
+        <div id="mcp-preview" style="${S.preview}"></div>
+        <div style="${S.footer}">
+            <button id="mcp-save" style="${S.btn}${S.primaryBtn}" disabled>${t('createTemplate')}</button>
             <button id="mcp-cancel" style="${S.btn}">${t('cancel')}</button>
         </div>
     `;
@@ -90,7 +103,7 @@ export async function showCreateTemplateDialog(onDone) {
             : allWorkflows;
 
         if (!matched.length) {
-            dropdown.innerHTML = `<div style="padding:6px 8px;color:#888;font-size:12px;">${t('noMatchingWorkflows')}</div>`;
+            dropdown.innerHTML = `<div style="${S.dropdownItem};color:#888;">${t('noMatchingWorkflows')}</div>`;
             dropdown.style.display = 'block';
             return;
         }
@@ -99,17 +112,16 @@ export async function showCreateTemplateDialog(onDone) {
             const item = document.createElement('div');
             item.textContent = workflow.name;
             item.title = workflow.name;
-            item.style.cssText =
-                'padding:7px 9px;cursor:pointer;font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+            item.style.cssText = S.dropdownItem;
             if (workflow.name === selectedWorkflow) {
-                item.style.background = '#3a5a3a';
+                item.style.background = '#263a2b';
             }
             item.addEventListener('mouseenter', () => {
-                item.style.background = '#3a3a5a';
+                item.style.background = '#2a2a2a';
             });
             item.addEventListener('mouseleave', () => {
                 item.style.background =
-                    workflow.name === selectedWorkflow ? '#3a5a3a' : '';
+                    workflow.name === selectedWorkflow ? '#263a2b' : '';
             });
             item.addEventListener('click', () => {
                 selectedWorkflow = workflow.name;
@@ -151,7 +163,7 @@ export async function showCreateTemplateDialog(onDone) {
             return;
         }
 
-        preview.innerHTML = t('analyzingWorkflow');
+        preview.innerHTML = mutedText(t('analyzingWorkflow'));
         try {
             const workflowContent = await apiFetch(`/workflows/${name}`);
             const info = await apiFetch('/templates/extract', {
@@ -161,7 +173,7 @@ export async function showCreateTemplateDialog(onDone) {
             preview.innerHTML = renderWorkflowPreview(info);
             saveBtn.disabled = false;
         } catch (e) {
-            preview.innerHTML = `<span style="color:#f66;">${t('error', { message: e.message })}</span>`;
+            preview.innerHTML = `<span style="color:#f66;">${escapeHtml(t('error', { message: e.message }))}</span>`;
         }
     }
 
