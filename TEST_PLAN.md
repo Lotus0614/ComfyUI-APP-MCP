@@ -343,7 +343,7 @@
 
 **验证点：**
 - [ ] 单个媒体输出包含 `type`、`url`、`ref`、`markdown`
-- [ ] 单个文本输出包含 `type`、`value`、`ref`、`markdown`
+- [ ] 单个文本输出只包含 `type`、`value`、`ref`
 - [ ] 多值输出使用 `items`，每个元素带自己的 `ref`
 - [ ] 无 `output_name`、`node_id`、`title`、`filename`、`subfolder`、`item_type`
 - [ ] 输出名称不包含节点 ID

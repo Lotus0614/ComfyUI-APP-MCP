@@ -175,8 +175,7 @@ AI 助手通过 MCP 协议使用以下工具：
     "最终提示词": {
       "type": "text",
       "value": "a cute cat, masterpiece, best quality...",
-      "ref": "result://abc-123/%E6%9C%80%E7%BB%88%E6%8F%90%E7%A4%BA%E8%AF%8D/0",
-      "markdown": "a cute cat, masterpiece, best quality..."
+      "ref": "result://abc-123/%E6%9C%80%E7%BB%88%E6%8F%90%E7%A4%BA%E8%AF%8D/0"
     },
     "输出图片": {
       "type": "image",
@@ -201,7 +200,7 @@ AI 助手通过 MCP 协议使用以下工具：
 }
 ```
 
-- 单个媒体输出包含 `type`、`url`、`ref`、`markdown`；单个文本输出包含 `type`、`value`、`ref`、`markdown`
+- 单个媒体输出包含 `type`、`url`、`ref`、`markdown`；单个文本输出只包含 `type`、`value`、`ref`
 - `ref` 是不透明输出引用，可直接放入下一次调用的 `bindings`，AI 不需要关注节点 ID、文件名或 ComfyUI 存储信息
 
 ##### 使用 Binding 串联模板（推荐）

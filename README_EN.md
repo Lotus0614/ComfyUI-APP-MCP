@@ -175,8 +175,7 @@ On success, returns a clean structured result:
     "final_prompt": {
       "type": "text",
       "value": "a cute cat, masterpiece, best quality...",
-      "ref": "result://abc-123/final_prompt/0",
-      "markdown": "a cute cat, masterpiece, best quality..."
+      "ref": "result://abc-123/final_prompt/0"
     },
     "output_image": {
       "type": "image",
@@ -201,7 +200,7 @@ If waiting times out, the result looks like:
 }
 ```
 
-- A single media output contains `type`, `url`, `ref`, and `markdown`; a single text output contains `type`, `value`, `ref`, and `markdown`
+- A single media output contains `type`, `url`, `ref`, and `markdown`; a single text output contains only `type`, `value`, and `ref`
 - `ref` is an opaque output reference that can be passed directly into the next call's `bindings`
 
 ##### Using Bindings to Chain Templates (Recommended)

@@ -1163,7 +1163,6 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                     "type": "text",
                     "value": texts[0],
                     "ref": _build_output_ref("result", prompt_id, public_name, 0),
-                    "markdown": str(texts[0]),
                 }
             else:
                 public_result = {
@@ -1175,7 +1174,6 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                         }
                         for index, text in enumerate(texts)
                     ],
-                    "markdown": "\n".join(str(text) for text in texts),
                 }
         if media_urls:
             public_items = [
