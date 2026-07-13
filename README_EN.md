@@ -2,324 +2,49 @@
 
 [中文](./README.md) | [English](./README_EN.md)
 
-A ComfyUI plugin that wraps ComfyUI apps as MCP-callable templates, so AI assistants can use ComfyUI as a multimedia capability service that is queryable, executable, and chainable.
+Wrap ComfyUI App Mode workflows as MCP tools, so AI assistants can discover templates, run workflows, chain multi-step generation, and handle media outputs without understanding the underlying node graph.
 
-Key capabilities:
+## What It Is For
 
-- Mark inputs and outputs through ComfyUI App Mode, so the AI only needs to pass input/output parameters and does not need to understand the ComfyUI node graph.
-- Template documentation with progressive disclosure through on-demand doc reads
-- Multi-template chaining, passing outputs from one step into later steps
-- Model directory lookup for folders such as `checkpoints` and `loras`
+- **Expose ComfyUI to AI assistants**: the AI fills template parameters instead of editing nodes.
+- **Reuse App Mode workflows**: mark inputs and outputs in the ComfyUI frontend, then create MCP templates.
+- **Build media pipelines**: let the AI pass outputs from one step into later processing steps.
+- **Browse local models**: let the AI query `checkpoints`, `loras`, `vae`, and other model folders.
 
 ## Quick Start
 
-1. Install this project as a ComfyUI plugin by placing it under the `custom_nodes` directory.
-2. Open a workflow in ComfyUI and click **Enter App Builder** from the top-left menu.
-3. Mark content that you want the AI to modify, such as prompt text boxes, as inputs. Mark Save Image nodes as outputs, and rename input nodes to AI-friendly parameter names.
-4. Add Markdown Note nodes to describe the template. The AI reads these node contents when it reads the template:
-   - Title `title`: short title shown when listing templates
-   - Title `description`: template description shown when fetching template details
-   - Other titles: on-demand template docs. Mention the title in `description` so the AI knows to read it
-5. In the ComfyUI frontend, go to **Settings → MCP Server → Templates** and click **Create from Workflow** to create a template from the configured workflow.
-6. Connect your MCP client to `http://127.0.0.1:8188/app-mcp` (or `http://127.0.0.1:8189/mcp`).
-7. Call `list_templates()` first to verify visibility, then use `get_template()`, `run_template()`, or `run_templates()`.
-8. If the workflow changes, click **Refresh** in the settings panel. If parameters changed, ask the AI to read the template again.
-   > Templates depend on ComfyUI App Mode. Use a ComfyUI version that supports App Mode.
-
-## Dependencies
-
-This plugin depends on the following Python packages:
-
-| Package   | Version   | Purpose                                    |
-| --------- | --------- | ------------------------------------------ |
-| `fastmcp` | >= 1.0.0  | MCP protocol framework                     |
-| `uvicorn` | >= 0.30.0 | ASGI server                                |
-| `httpx`   | >= 0.27.0 | HTTP client for communicating with ComfyUI |
-
-### Installation
-
-### Environment Variables
-
-| Variable             | Default                 | Description                                                                        |
-| -------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
-| `COMFYUI_URL`        | `http://127.0.0.1:8188` | ComfyUI server URL                                                                 |
-| `COMFYUI_PUBLIC_URL` | Same as `COMFYUI_URL`   | Optional advanced setting; used for media links when the media proxy is off        |
-| `MCP_CONFIG`         | Empty                   | JSON config file path for standalone mode                                          |
-| `MCP_TEMPLATE_DIR`   | `./templates`           | Template JSON directory                                                            |
-| `MCP_HOST`           | `0.0.0.0`               | MCP server bind host                                                               |
-| `MCP_PORT`           | `8189`                  | MCP server port                                                                    |
-| `MCP_MEDIA_PROXY`    | `true`                  | Whether media links use the MCP `/view` proxy when accessing the MCP port directly |
-
-### Standalone Configuration
-
-The plugin can also run as a standalone MCP service without being loaded through ComfyUI's plugin flow. In this mode, ComfyUI and MCP can be deployed on different machines, but executing templates still requires the MCP service to access the ComfyUI HTTP API.
-
-Create `mcp.config.json`:
-
-```json
-{
-  "comfyui": {
-    "apiUrl": "http://192.168.1.20:8188",
-    "headers": {}
-  },
-  "mcp": {
-    "host": "0.0.0.0",
-    "port": 8189,
-    "mediaProxy": true
-  },
-  "templates": {
-    "dir": "./templates"
-  }
-}
-```
-
-- `comfyui.apiUrl`: the address MCP uses to access the ComfyUI API. Do not use `127.0.0.1` if MCP and ComfyUI are not on the same machine.
-- `mcp.mediaProxy`: when connecting directly to the standalone MCP port, media links in results point to MCP `/view`, and MCP forwards them to ComfyUI `/view`. This means clients do not need to expose or access the ComfyUI port.
-- `templates.dir`: local template JSON directory on the MCP machine. Standalone mode does not read the template directory on the ComfyUI machine.
-
-The recommended default is `mcp.mediaProxy=true`; usually `comfyui.publicUrl` is not needed. Add it only when the media proxy is disabled, or when you want media links to return a custom public or reverse-proxy ComfyUI address:
-
-```json
-{
-  "comfyui": {
-    "publicUrl": "https://comfy.example.com"
-  }
-}
-```
-
-Start the standalone MCP service:
-
-```bash
-python standalone.py --config ./mcp.config.json
-```
-
-MCP client URL:
-
-```text
-http://<mcp-machine-address>:8189/mcp
-```
-
-### Startup
-
-Start ComfyUI normally. The plugin will be loaded automatically and expose MCP through the ComfyUI port:
-
-```text
-MCP endpoint: http://127.0.0.1:8188/app-mcp
-```
-
-In plugin mode, there are two MCP connection options:
-
-- **Connect through the ComfyUI port**: `http://<comfyui-address>:8188/app-mcp`
-  - Suitable when the ComfyUI port is already exposed
-  - MCP requests are proxied by ComfyUI to the internal MCP service
-- **Connect directly through the MCP port**: `http://<mcp-address>:8189/mcp`
-  - Suitable when you do not want MCP clients to access the ComfyUI port
-  - Media links in generated results point to MCP `/view`, then MCP forwards them to ComfyUI
-
-For remote access, start ComfyUI with `--listen`:
-
-```bash
-python main.py --listen
-```
-
-## Tool List
-
-AI assistants can use the following MCP tools:
-
-#### `list_templates`
-
-Lists all available templates with only their names and titles. Disabled templates are excluded.
-
-#### `get_template(name)`
-
-Returns template details including:
-
-- `title`: template title, extracted from the workflow `title` Markdown node
-- `description`: detailed description, extracted from the workflow `description` Markdown node
-- `inputs`: public parameters containing only types, defaults, and useful constraints. Internal fields such as `node_id`, `api_key`, and `widget` are not returned. Inputs named `seed` are randomized at runtime.
-- `outputs`: stable business output names and types without ComfyUI node IDs
-- `docs`: doc title list readable through `read_template_doc(name, title)`
-
-Disabled templates cannot be queried.
-
-#### `read_template_doc(name, title)`
-
-Reads a template documentation section by title for progressive disclosure of more detailed guidance, examples, or notes.
-
-- `name`: template name
-- `title`: doc title such as `usage`, `examples`, or `tips`
-
-Disabled templates cannot expose template docs.
-
-#### `run_template(name, params, wait=true, bindings="{}")`
-
-Executes a template with parameter values.
-
-- `name`: template name
-- `params`: JSON string of parameter values, for example `'{"positive_prompt": "a cat"}'`. If the template contains an input named `seed`, the runtime injects a random seed automatically.
-- `wait`: whether to wait for completion, defaults to `true`
-- `bindings`: optional JSON string mapping input names to previous `result://` output references
-
-When `wait=true`, the default wait timeout is controlled by **Settings → MCP Server → Execution → Run Template Timeout** in the ComfyUI frontend. The default is `120` seconds.
-
-Disabled templates cannot be run.
-
-##### Output Format
-
-On success, returns a clean structured result:
-
-```json
-{
-  "status": "completed",
-  "outputs": {
-    "final_prompt": {
-      "type": "text",
-      "value": "a cute cat, masterpiece, best quality...",
-      "ref": "result://abc-123/final_prompt/0"
-    },
-    "output_image": {
-      "type": "image",
-      "url": "http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output",
-      "ref": "result://abc-123/output_image/0",
-      "markdown": "![output_image](http://127.0.0.1:8188/view?filename=output.png&subfolder=prompt_gallery&type=output)"
-    }
-  }
-}
-```
-
-If waiting times out, the result looks like:
-
-```json
-{
-  "status": "timeout",
-  "run_id": "abc-123",
-  "template": "anima mcp.app",
-  "outputs": {},
-  "error": "Timed out after 120s",
-  "continue_hint": "Use get_template_result(name, run_id, wait=true) to continue waiting for the same prompt."
-}
-```
-
-- A single media output contains `type`, `url`, `ref`, and `markdown`; a single text output contains only `type`, `value`, and `ref`
-- `ref` is an opaque output reference that can be passed directly into the next call's `bindings`
-
-##### Using Bindings to Chain Templates (Recommended)
-
-**Important: When processing template-generated images, you MUST use bindings. Do NOT upload manually!**
-
-Each output includes a `ref`. To chain templates, pass that string directly into the next call's `bindings` parameter:
-
-```python
-# Step 1: Generate image
-result1 = run_template("anima mcp.app", '{"prompt": "a cute cat"}')
-# result1.outputs["output_image"].ref = "result://abc-123/output_image/0"
-
-# Step 2: Encrypt (use the ref directly)
-result2 = run_template("encrypt.app", '{}', bindings='{"image": "result://abc-123/output_image/0"}')
-```
-
-`upload_image` is only for new images provided by the user (not generated by templates).
-
-#### `run_templates(pipeline, timeout_per_step=300)`
-
-Runs multiple templates sequentially and binds outputs from earlier steps into later step inputs.
-
-- `pipeline`: JSON string such as:
-
-```json
-{
-  "steps": [
-    {
-      "id": "generate",
-      "template": "txt2img",
-      "params": {
-        "prompt": "a cat"
-      }
-    },
-    {
-      "id": "upscale",
-      "template": "upscale",
-      "params": {
-        "scale": 2
-      },
-      "bindings": {
-        "image": "step://generate/output_image/0"
-      }
-    }
-  ]
-}
-```
-
-- `timeout_per_step`: timeout in seconds for each step, default `300`
-- Inside a pipeline, use `step://<step-id>/<output>/<index>` to reference an earlier step
-- In a normal `run_template` call, use the `result://` ref returned by the previous execution
-
-On failure, the tool returns the failed step and step statuses. On success, it returns a concise step status list and the final outputs.
-
-#### `upload_image(source)`
-
-Uploads an image to ComfyUI for use as an image input.
-
-**Note: Only for new images provided by the user!** When processing template-generated images, use the output `ref` instead of manual upload.
-
-Supported sources:
-
-- **Local path**: `E:/photos/input.png`
-- **HTTP URL**: `https://example.com/image.png`
-- **Base64**: `data:image/png;base64,iVBOR...`
-
-The upload preserves the original extension but generates a unique filename such as `mcp_4b2f...a91c.png`, so identical source names never overwrite each other. The returned `name` can be used as a template parameter.
-
-#### `list_models(folder="", keywords="")`
-
-Lists ComfyUI model folders or models inside a specific folder.
-
-- Without `folder`: returns available model directories
-- With `folder`: returns models in that directory, such as `checkpoints`, `loras`, `vae`, or `controlnet`
-- `keywords`: optional search keywords, case-insensitive, multiple keywords separated by spaces act as AND conditions, e.g. `keywords="sdxl"` or `keywords="detail anime"`
-
-#### `get_template_result(name, run_id, wait=false, timeout=300)`
-
-Fetches execution results.
-
-- `wait=false`: return the current status immediately (`pending`, `running`, `completed`) for manual polling
-- `wait=true`: block until completion or timeout. If the `run_id` does not exist (not in queue or history), returns an error within a few seconds instead of waiting until timeout
-- `timeout`: wait timeout in seconds, default `300`
-
-## ComfyUI Frontend Management
-
-In **Settings → MCP Server**:
-
-- **Status**: view MCP server status and connection address
-- **Execution → Run Template Timeout**: set the default wait timeout for `run_template(wait=true)`, default `120` seconds; after timeout, call `get_template_result(name, run_id, wait=true)` to continue waiting
-- **Templates**: view, refresh, disable or enable, and delete templates
-- **Auto Extract Templates**: scan all workflows and auto-create templates for those with a `title` Markdown node that don't have a template yet
-- **Batch Refresh Templates**: refresh all templates from their source workflows, re-extracting inputs, outputs, title, and description
-- **Export Templates**: export the current template JSON files and download `mcp-templates.zip`
-
-The exported archive only contains templates:
-
-```text
-mcp-templates.zip
-└── templates/
-    ├── txt2img.json
-    └── upscale.json
-```
-
-For standalone deployment, extract `templates/` onto the MCP machine and point `templates.dir` in `mcp.config.json` to that directory.
-
-## MCP Client Setup
-
-In plugin mode, you can choose either connection URL:
-
-- `http://<comfyui-address>:8188/app-mcp`: access MCP through the ComfyUI port
-- `http://<mcp-address>:8189/mcp`: access the MCP port directly
-
-If you do not want to expose the ComfyUI port, clients can connect only to `8189/mcp`. In this case, media links such as images, audio, and GIFs return as `http://<mcp-address>:8189/view?...`, and MCP proxies them to ComfyUI `/view`.
-
-### Claude Desktop
-
-Add this to `claude_desktop_config.json`:
+1. Install the plugin under ComfyUI `custom_nodes` and install dependencies:
+
+   ```bash
+   cd ComfyUI/custom_nodes
+   git clone <this-repo-url> ComfyUI-APP-MCP
+   cd ComfyUI-APP-MCP
+   python -m pip install -r requirements.txt
+   ```
+
+2. Start ComfyUI with a version that supports App Mode.
+3. Open a workflow and enter **App Builder** from the top-left menu.
+4. Mark AI-editable fields as inputs, mark result nodes as outputs, and give inputs clear parameter names.
+5. Add Markdown Note nodes for template docs:
+   - `title`: short title shown in the template list
+   - `description`: detailed description shown in template details
+   - Other headings: extra docs that can be read on demand
+6. Go to **Settings → MCP Server → Templates** and click **Create from Workflow**.
+7. Connect your MCP client to `http://127.0.0.1:8188/app-mcp` or `http://127.0.0.1:8189/mcp`.
+8. Ask the AI to call `list_templates()` first, then `get_template()`, `run_template()`, or `run_templates()`.
+
+After changing a workflow, click **Refresh** on the same-name template in the settings panel. If inputs changed, ask the AI to read the template again.
+
+If a workflow should use a random seed on every run, name the corresponding App Builder input `seed`. Runtime fills it automatically, so the AI does not need to pass it.
+
+## Connection URLs
+
+| Entry | URL | Notes |
+| --- | --- | --- |
+| ComfyUI proxy entry | `http://127.0.0.1:8188/app-mcp` | Access MCP through the ComfyUI port |
+| Direct MCP entry | `http://127.0.0.1:8189/mcp` | Starts with ComfyUI and works the same way |
+
+MCP client config example:
 
 ```json
 {
@@ -331,108 +56,74 @@ Add this to `claude_desktop_config.json`:
 }
 ```
 
-### Cursor
-
-Add this to `.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "comfyui": {
-      "url": "http://127.0.0.1:8188/app-mcp"
-    }
-  }
-}
-```
-
-### Other MCP Clients
-
-Connection URL: `http://<comfyui-address>/app-mcp` (Streamable HTTP transport)
-
-### Remote Access
-
-Start ComfyUI with `--listen 0.0.0.0` to accept LAN connections. Then phones or other devices can connect directly, and image links will automatically use the correct address:
-
-```json
-{
-  "mcpServers": {
-    "comfyui": {
-      "url": "http://192.168.0.113:8188/app-mcp"
-    }
-  }
-}
-```
-
-> You do not need to configure `comfyui_url` manually. The server derives it from the request automatically.
-
-## Logs
-
-All MCP calls are printed in the ComfyUI console with the `[MCP]` prefix:
+You can also set `url` to:
 
 ```text
-[MCP] list_templates() → 3 templates
-[MCP] run_template(name='txt2img', params={"positive_prompt": "a cat"}) → completed
-[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_4b2f...a91c.png", "subfolder": "", "type": "input"}
+http://127.0.0.1:8189/mcp
 ```
 
-Proxy requests are printed with the `[MCP Proxy]` prefix:
+For remote ComfyUI access, start ComfyUI with `python main.py --listen`.
 
-```text
-[MCP Proxy] POST /app-mcp → http://127.0.0.1:8189/mcp
-[MCP Proxy] upstream error: ...  (failed to connect to the internal MCP server)
+For LAN or remote access, replace `127.0.0.1` with the actual ComfyUI/MCP host. See [Standalone and Remote Access](./docs/en/standalone.md) for deployment details.
+
+## Common Tools
+
+| Tool | Purpose | When To Use |
+| --- | --- | --- |
+| `list_templates()` | List available templates | First step before using the service |
+| `get_template(name)` | Read parameters, outputs, and doc entries | Before running a template |
+| `read_template_doc(name, title)` | Read extra template docs | When `description` points to more docs |
+| `run_template()` | Run one template | Text-to-image, image-to-image, upscale, post-process, etc. |
+| `run_templates()` | Chain multiple templates | Generate → upscale → post-process pipelines |
+| `upload_image(source)` | Upload a new user-provided image | When the image comes from local path, URL, or base64 |
+| `list_models(folder, keywords)` | Browse model folders | When selecting checkpoints, LoRAs, VAEs, etc. |
+| `get_template_result()` | Poll or continue waiting | When a run times out or is async |
+
+See [Tool Reference](./docs/en/tools.md) for full parameters, return formats, and examples.
+
+## Frontend Management
+
+In **Settings → MCP Server**, you can:
+
+- View MCP status and connection URLs
+- Configure the default `run_template(wait=true)` timeout
+- Create, refresh, enable, disable, and delete templates
+- Scan workflows and create missing templates
+- Batch refresh existing templates
+- Export templates as a zip for standalone deployment
+
+See [Tool Reference: Frontend Management](./docs/en/tools.md#comfyui-frontend-management) for details.
+
+## Documentation
+
+| Doc | Content |
+| --- | --- |
+| [Tool Reference](./docs/en/tools.md) | MCP tool parameters, return formats, template chaining, uploads, model lookup |
+| [Standalone and Remote Access](./docs/en/standalone.md) | Environment variables, standalone config, media proxy, client setup |
+| [Troubleshooting](./docs/en/troubleshooting.md) | Empty templates, empty outputs, image inputs, remote access, logs |
+| [Development Notes](./docs/en/development.md) | Code layout, testing guidance, development commands |
+| [Documentation Index](./docs/README.md) | Chinese and English doc entry points |
+
+## Most Common Issues
+
+### Template List Is Empty
+
+Make sure the workflow was saved to the ComfyUI server through **Save**, not only exported locally through **Export**.
+
+### Image Input Does Not Work
+
+For a new image provided by the user, call `upload_image()` first and use the returned `name` as the template parameter. Template-generated images can be chained by the AI and do not need to be uploaded manually.
+
+### Workflow Not Found When Creating a Template
+
+Check whether ComfyUI is running on port `8188`. The plugin reads workflows through `COMFYUI_URL=http://127.0.0.1:8188` by default. If your ComfyUI port is not `8188`, set it before startup:
+
+```bash
+COMFYUI_URL=http://127.0.0.1:<your-port>
 ```
 
-## FAQ
+### Images Cannot Be Sent Through AstrBot or Similar Platforms
 
-### Template list is empty
+Check that the AI passes the correct argument type to the platform's send tool. A common mistake is passing an image URL into a local-file `path` argument. If the tool distinguishes `url`, `image_url`, `file`, and `path`, use the field required by that tool.
 
-Make sure the workflow was saved to the server through ComfyUI **Save**, not **Export**.
-
-### Outputs are empty
-
-Make sure `linearData.outputs` in the workflow includes the node IDs you want to return.
-
-### How to use random seed
-
-In the app builder, name the seed input that should refresh automatically as `seed`. At runtime, the template injects a random seed automatically. `get_template` does not return this parameter to AI clients, and AI clients do not need to pass `seed` to `run_template`.
-
-### Parameter mapping errors
-
-If ComfyUI reports `value_not_in_list`, widget value mapping is likely misaligned. Restart ComfyUI so the plugin reloads, or click **Refresh** on the template in the settings panel.
-
-### Remote access returns 421
-
-Make sure ComfyUI was started with `--listen`. The plugin already disables MCP DNS rebinding protection, so LAN IP access should work directly.
-
-### Image input does not work
-
-If it's a new image provided by the user, call `upload_image` first and use the returned filename as the template parameter.
-
-If it's a template-generated image, use the output `ref` for chaining instead of manual upload.
-
-### Binding fails
-
-If binding returns an error, check:
-
-1. The reference uses a valid `result://` (`run_template`) or `step://` (`run_templates`) format
-2. `output` exists in the source result's `outputs`
-3. `index` is within range
-
-## File Layout
-
-```text
-mcp-server/
-├── __init__.py          # ComfyUI plugin entrypoint
-├── server.py            # MCP tool definitions
-├── standalone.py        # Standalone MCP HTTP service entrypoint
-├── config.py            # JSON config and environment variable loading
-├── template_manager.py  # Template CRUD, workflow conversion, execution engine
-├── comfyui_client.py    # ComfyUI HTTP client
-├── routes.py            # Frontend API routes and MCP proxy
-├── js/
-│   └── index.js         # Frontend settings panel UI
-├── templates/           # Template JSON storage
-├── TEST_PLAN.md         # Test plan document
-├── README.md            # Chinese README
-└── README_EN.md         # English README
-```
+See [Troubleshooting](./docs/en/troubleshooting.md) for more checks.
