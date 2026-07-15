@@ -8,7 +8,7 @@ Wrap ComfyUI App Mode workflows as MCP tools, so AI assistants can discover temp
 
 - **Expose ComfyUI to AI assistants**: the AI fills template parameters instead of editing nodes.
 - **Reuse App Mode workflows**: mark inputs and outputs in the ComfyUI frontend, then create MCP templates.
-- **Build media pipelines**: let the AI pass outputs from one step into later processing steps.
+- **Batch and multi-step execution**: run multiple independent tasks in one call, or pass outputs into later processing steps.
 - **Browse local models**: let the AI query `checkpoints`, `loras`, `vae`, and other model folders.
 
 ## Quick Start
@@ -74,7 +74,7 @@ For LAN or remote access, replace `127.0.0.1` with the actual ComfyUI/MCP host. 
 | `get_template(name)` | Read parameters, outputs, and doc entries | Before running a template |
 | `read_template_doc(name, title)` | Read extra template docs | When `description` points to more docs |
 | `run_template()` | Run one template | Text-to-image, image-to-image, upscale, post-process, etc. |
-| `run_templates()` | Chain multiple templates | Generate → upscale → post-process pipelines |
+| `run_templates()` | Run multiple tasks and return every step result | Batch generation or generate → upscale workflows |
 | `upload_image(source)` | Upload a new user-provided image | When the image comes from local path, URL, or base64 |
 | `list_models(folder, keywords)` | Browse model folders | When selecting checkpoints, LoRAs, VAEs, etc. |
 | `get_template_result()` | Poll or continue waiting | When a run times out or is async |

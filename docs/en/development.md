@@ -55,7 +55,7 @@ The project mainly relies on manual integration testing. Focus on:
 
 - Template create, refresh, disable, and delete
 - `list_templates()`, `get_template()`, `run_template()`
-- `run_templates()` multi-step bindings
+- `run_templates()` multi-task execution and step bindings
 - `upload_image()` local path, URL, and base64
 - `get_template_result()` after timeouts
 - Standalone MCP service and media proxy

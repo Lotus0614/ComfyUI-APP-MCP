@@ -9,7 +9,7 @@
 1. 调用 `list_templates()` 查看可用模板。
 2. 调用 `get_template(name)` 读取输入参数、输出和文档入口。
 3. 如 `description` 提到更多说明，再调用 `read_template_doc(name, title)`。
-4. 调用 `run_template()` 执行单个模板，或用 `run_templates()` 串联多个模板。
+4. 调用 `run_template()` 执行单个任务，或用 `run_templates()` 一次运行多个独立任务或关联步骤。
 5. 如果返回超时，用 `get_template_result()` 继续查询。
 
 ## 工具速览
@@ -20,7 +20,7 @@
 | `get_template(name)` | 获取模板输入、输出、描述和可读取文档标题 |
 | `read_template_doc(name, title)` | 读取模板文档中的指定章节 |
 | `run_template(name, params, wait, bindings)` | 执行单个模板 |
-| `run_templates(pipeline, timeout_per_step)` | 顺序执行多个模板并绑定前序输出 |
+| `run_templates(pipeline, timeout_per_step)` | 一次顺序运行多个任务，可选绑定前序输出 |
 | `upload_image(source)` | 上传用户提供的新图片 |
 | `list_models(folder, keywords)` | 查询模型目录或模型文件 |
 | `get_template_result(name, run_id, wait, timeout)` | 查询或继续等待执行结果 |
@@ -146,7 +146,28 @@ result2 = run_template(
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
-按顺序执行多个模板，并将前序步骤输出绑定到后续步骤输入。
+一次调用中按顺序执行多个任务，并返回每一步的完整结果。步骤可以彼此独立；只有后续任务依赖前序输出时，才需要配置 `bindings`。
+
+多个独立任务示例：
+
+```json
+{
+  "steps": [
+    {
+      "id": "cat",
+      "template": "txt2img",
+      "params": {"prompt": "a cat"}
+    },
+    {
+      "id": "dog",
+      "template": "txt2img",
+      "params": {"prompt": "a dog"}
+    }
+  ]
+}
+```
+
+需要使用前序输出时，再添加 `bindings`：
 
 ```json
 {
@@ -172,11 +193,50 @@ result2 = run_template(
 }
 ```
 
+成功时，每一步都会返回与 `run_template()` 相同结构的完整输出：
+
+```json
+{
+  "status": "completed",
+  "steps": [
+    {
+      "id": "generate",
+      "template": "txt2img",
+      "status": "completed",
+      "outputs": {
+        "输出图片": {
+          "type": "image",
+          "url": "http://127.0.0.1:8188/view?filename=generated.png&type=output",
+          "ref": "result://generate-run-id/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0",
+          "markdown": "![输出图片](http://127.0.0.1:8188/view?filename=generated.png&type=output)"
+        }
+      }
+    },
+    {
+      "id": "upscale",
+      "template": "upscale",
+      "status": "completed",
+      "outputs": {
+        "输出图片": {
+          "type": "image",
+          "url": "http://127.0.0.1:8188/view?filename=upscaled.png&type=output",
+          "ref": "result://upscale-run-id/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0",
+          "markdown": "![输出图片](http://127.0.0.1:8188/view?filename=upscaled.png&type=output)"
+        }
+      }
+    }
+  ]
+}
+```
+
 说明：
 
 - `timeout_per_step` 是每一步超时时间，单位秒。
+- 不配置 `bindings` 时，各步骤是相互独立的任务。
 - `run_templates()` 内部使用 `step://<步骤 id>/<输出名>/<索引>`。
 - 普通 `run_template()` 返回的引用使用 `result://`。
+- 每个 step 都包含 `id`、`template`，以及和单模板执行一致的 `status`、`outputs`、`error`、`run_id` 等结果字段。
+- 顶层只描述流水线整体状态，不重复返回最后一步输出。
 
 ## `upload_image(source)`
 

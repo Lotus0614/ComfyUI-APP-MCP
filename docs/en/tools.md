@@ -9,7 +9,7 @@ This page describes MCP tool parameters, return formats, and recommended usage.
 1. Call `list_templates()` to discover available templates.
 2. Call `get_template(name)` to read inputs, outputs, and doc entries.
 3. If `description` points to extra docs, call `read_template_doc(name, title)`.
-4. Call `run_template()` for a single template, or `run_templates()` for a pipeline.
+4. Call `run_template()` for one task, or `run_templates()` for multiple independent or connected tasks.
 5. If a run times out, continue with `get_template_result()`.
 
 ## Tool Summary
@@ -20,7 +20,7 @@ This page describes MCP tool parameters, return formats, and recommended usage.
 | `get_template(name)` | Read template inputs, outputs, description, and doc titles |
 | `read_template_doc(name, title)` | Read a specific template doc section |
 | `run_template(name, params, wait, bindings)` | Run one template |
-| `run_templates(pipeline, timeout_per_step)` | Run multiple templates sequentially |
+| `run_templates(pipeline, timeout_per_step)` | Run multiple tasks sequentially with optional bindings |
 | `upload_image(source)` | Upload a new image provided by the user |
 | `list_models(folder, keywords)` | Browse model folders or files |
 | `get_template_result(name, run_id, wait, timeout)` | Poll or continue waiting for a result |
@@ -146,7 +146,28 @@ result2 = run_template(
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
-Runs multiple templates sequentially and binds outputs from previous steps to later inputs.
+Runs multiple tasks sequentially in one call and returns every step's complete result. Steps may be independent; use `bindings` only when a later task depends on an earlier output.
+
+Multiple independent tasks:
+
+```json
+{
+  "steps": [
+    {
+      "id": "cat",
+      "template": "txt2img",
+      "params": {"prompt": "a cat"}
+    },
+    {
+      "id": "dog",
+      "template": "txt2img",
+      "params": {"prompt": "a dog"}
+    }
+  ]
+}
+```
+
+Add `bindings` only when a task needs an earlier output:
 
 ```json
 {
@@ -172,11 +193,50 @@ Runs multiple templates sequentially and binds outputs from previous steps to la
 }
 ```
 
+On success, every step includes a complete result with the same structure as `run_template()`:
+
+```json
+{
+  "status": "completed",
+  "steps": [
+    {
+      "id": "generate",
+      "template": "txt2img",
+      "status": "completed",
+      "outputs": {
+        "output_image": {
+          "type": "image",
+          "url": "http://127.0.0.1:8188/view?filename=generated.png&type=output",
+          "ref": "result://generate-run-id/output_image/0",
+          "markdown": "![output_image](http://127.0.0.1:8188/view?filename=generated.png&type=output)"
+        }
+      }
+    },
+    {
+      "id": "upscale",
+      "template": "upscale",
+      "status": "completed",
+      "outputs": {
+        "output_image": {
+          "type": "image",
+          "url": "http://127.0.0.1:8188/view?filename=upscaled.png&type=output",
+          "ref": "result://upscale-run-id/output_image/0",
+          "markdown": "![output_image](http://127.0.0.1:8188/view?filename=upscaled.png&type=output)"
+        }
+      }
+    }
+  ]
+}
+```
+
 Notes:
 
 - `timeout_per_step` is the timeout for each step in seconds.
+- Without `bindings`, steps are independent tasks.
 - `run_templates()` uses `step://<step-id>/<output-name>/<index>`.
 - A normal `run_template()` result uses `result://`.
+- Every step includes `id`, `template`, and the same `status`, `outputs`, `error`, `run_id`, and related result fields as a single-template run.
+- The top level only describes pipeline status and does not duplicate the final step output.
 
 ## `upload_image(source)`
 

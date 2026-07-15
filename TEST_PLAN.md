@@ -222,9 +222,25 @@
 
 ---
 
-## 四、流水线（run_templates）
+## 四、多任务与流水线（run_templates）
 
-### 4.1 两步流水线：生成 + 放大
+### 4.1 两个独立生成任务
+
+```
+调用: run_templates(pipeline='{
+  "steps": [
+    {"id": "cat", "template": "anima mcp.app", "params": {"提示词": "a cat"}},
+    {"id": "dog", "template": "anima mcp.app", "params": {"提示词": "a dog"}}
+  ]
+}')
+```
+
+**验证点：**
+- [ ] 两个任务都执行成功，不需要配置 `bindings`
+- [ ] `steps` 数组有 2 个元素，每个 step 都包含完整 `outputs`
+- [ ] 两个 step 返回各自生成的图片
+
+### 4.2 两步流水线：生成 + 放大
 
 ```
 调用: run_templates(pipeline='{
@@ -247,14 +263,15 @@
 ```
 
 **验证点：**
-- [ ] 返回 `{"status": "completed", "steps": [...], "outputs": {...}}`
+- [ ] 返回 `{"status": "completed", "steps": [...]}`
 - [ ] `steps` 数组有 2 个元素
-- [ ] 每个 step 只有 `id`、`template`、`status`
+- [ ] 每个 step 包含 `id`、`template`、`status`、`outputs`
 - [ ] 所有 step 的 `status` 为 `"completed"`
-- [ ] 顶层 `outputs` 是最后一步输出
+- [ ] 每个 step 的 `outputs` 与单独调用 `run_template` 的输出格式一致
+- [ ] 顶层不包含重复的 `outputs`
 - [ ] 结果不包含 `final`、`binding_hint`、步骤 `params`、步骤 `prompt_id`
 
-### 4.2 两步流水线：生成 + 加密
+### 4.3 两步流水线：生成 + 加密
 
 ```
 调用: run_templates(pipeline='{
@@ -279,7 +296,7 @@
 - [ ] 执行成功
 - [ ] 加密后的图片是噪点图
 
-### 4.3 三步流水线：生成 + 加密 + 解密
+### 4.4 三步流水线：生成 + 加密 + 解密
 
 ```
 调用: run_templates(pipeline='{
@@ -296,7 +313,7 @@
 - [ ] 解密后的图片与原图一致
 - [ ] `steps` 数组有 3 个元素
 
-### 4.4 流水线错误处理 — 无效模板
+### 4.5 流水线错误处理 — 无效模板
 
 ```
 调用: run_templates(pipeline='{
@@ -308,9 +325,9 @@
 
 **验证点：**
 - [ ] 返回 `{"status": "failed", "failed_step": "step1", "error": "..."}`
-- [ ] 包含 `steps` 数组（可能为空或包含失败的 step）
+- [ ] `steps` 包含失败的 step，其 `status` 为 `"failed"`、`outputs` 为空并带有 `error`
 
-### 4.5 流水线错误处理 — 重复 step id
+### 4.6 流水线错误处理 — 重复 step id
 
 ```
 调用: run_templates(pipeline='{
@@ -324,7 +341,7 @@
 **验证点：**
 - [ ] 返回错误信息包含 "Duplicate pipeline step id"
 
-### 4.6 流水线错误处理 — 空 steps
+### 4.7 流水线错误处理 — 空 steps
 
 ```
 调用: run_templates(pipeline='{"steps": []}')
@@ -361,8 +378,10 @@
 ### 5.3 run_templates 输出格式
 
 **验证点：**
-- [ ] 顶层有 `status`、`steps`、`outputs`
-- [ ] `steps` 只记录步骤 id、模板名和状态
+- [ ] 顶层只有流水线级 `status`、`steps`，失败时另有 `failed_step`、`error`
+- [ ] 每个 step 包含 `id`、`template` 和单模板同结构的完整执行结果
+- [ ] 每一步媒体输出包含 `type`、`url`、`ref`、`markdown`
+- [ ] 每一步文本输出包含 `type`、`value`、`ref`，不包含 `markdown`
 - [ ] 不存在 `final` 或 `binding_hint`
 
 ---
@@ -492,8 +511,9 @@
 - [ ] 返回结果包含 `result://` 输出引用
 - [ ] 返回结果中 `outputs` 无冗余字段
 - [ ] 用输出 `ref` 执行放大模板成功
+- [ ] `run_templates` 一次执行两个不带 `bindings` 的独立任务成功
 - [ ] `run_templates` 两步流水线成功
-- [ ] 流水线使用 `step://` 引用并仅返回最终输出
+- [ ] 流水线使用 `step://` 引用，每一步都返回完整输出
 
 ---
 

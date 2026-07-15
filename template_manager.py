@@ -155,6 +155,25 @@ def build_public_template_schema(template: dict) -> dict:
     }
 
 
+def build_public_execution_result(result: dict) -> dict:
+    """Return the public result shape shared by template execution tools."""
+    payload = {
+        "status": result.get("status", "failed" if result.get("error") else "completed"),
+        "outputs": result.get("outputs", {}),
+    }
+
+    if result.get("prompt_id") and result.get("status") != "completed":
+        payload["run_id"] = result["prompt_id"]
+    if result.get("template"):
+        payload["template"] = result["template"]
+    if result.get("error"):
+        payload["error"] = result["error"]
+    if result.get("continue_hint"):
+        payload["continue_hint"] = result["continue_hint"]
+
+    return payload
+
+
 def _build_output_ref(scheme: str, source_id: str, output_name: str, index: int) -> str:
     return f"{scheme}://{quote(str(source_id), safe='')}/{quote(output_name, safe='')}/{index}"
 
@@ -869,6 +888,11 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
                     step_results[source_step], output_name, index
                 )
         except Exception as e:
+            completed_steps.append({
+                "id": step_id,
+                "template": template_name,
+                **build_public_execution_result({"error": str(e)}),
+            })
             return {
                 "status": "failed",
                 "failed_step": step_id,
@@ -880,10 +904,9 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
         step_record = {
             "id": step_id,
             "template": template_name,
-            "status": result.get("status", "failed" if result.get("error") else "completed"),
+            **build_public_execution_result(result),
         }
         if result.get("error"):
-            step_record["error"] = result["error"]
             completed_steps.append(step_record)
             return {
                 "status": "failed",
@@ -896,11 +919,9 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
         step_results[step_id] = _mcp_outputs_cache.get(prompt_id, {})
         completed_steps.append(step_record)
 
-    final_outputs = result.get("outputs", {}) if completed_steps else {}
     return {
         "status": "completed",
         "steps": completed_steps,
-        "outputs": final_outputs,
     }
 
 

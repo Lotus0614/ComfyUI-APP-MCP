@@ -55,7 +55,7 @@ ComfyUI 会直接加载 `js/` 文件，没有单独构建步骤。
 
 - 模板创建、刷新、禁用、删除
 - `list_templates()`、`get_template()`、`run_template()`
-- `run_templates()` 多步绑定
+- `run_templates()` 多任务执行与多步绑定
 - `upload_image()` 本地路径、URL、base64
 - 生成超时后 `get_template_result()`
 - 独立 MCP 服务与媒体代理
