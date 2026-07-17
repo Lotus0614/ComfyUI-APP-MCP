@@ -11,6 +11,7 @@
 3. 如 `description` 提到更多说明，再调用 `read_template_doc(name, title)`。
 4. 调用 `run_template()` 执行单个任务，或用 `run_templates()` 一次运行多个独立任务或关联步骤。
 5. 如果返回超时，用 `get_template_result()` 继续查询。
+6. 如果不再需要异步或超时任务，用 `interrupt_task()` 中断。
 
 ## 工具速览
 
@@ -24,6 +25,7 @@
 | `upload_image(source)` | 上传用户提供的新图片 |
 | `list_models(folder, keywords)` | 查询模型目录或模型文件 |
 | `get_template_result(name, run_id, wait, timeout)` | 查询或继续等待执行结果 |
+| `interrupt_task(run_id)` | 中断运行中的任务，或移除排队中的任务 |
 
 ## `list_templates()`
 
@@ -265,6 +267,17 @@ result2 = run_template(
 - `wait=false`：立即返回当前状态，适合轮询。
 - `wait=true`：阻塞等待直到完成或超时。
 - `timeout`：等待超时时间，单位秒。
+
+## `interrupt_task(run_id)`
+
+使用 `run_template(wait=false)` 或超时结果返回的 `run_id` 中断任务。
+
+- 任务正在运行时，请求 ComfyUI 中断执行，返回 `{"status": "interrupted", "run_id": "..."}`。
+- 任务仍在排队时，从待执行队列移除，返回 `{"status": "cancelled", "run_id": "..."}`。
+- 任务已经结束时不重复中断，返回 `{"status": "already_finished", "run_id": "..."}`。
+- 找不到任务时返回 `error`。
+
+新版 ComfyUI 会通过按 ID 的原子接口取消任务。旧版 ComfyUI 不支持该接口时，工具会自动回退到全局中断接口，并先确认 `run_id` 位于运行队列；如果旧版实例配置了多个任务并发执行，中断请求可能影响同一实例上的其他运行中任务。
 
 ## ComfyUI 前端管理
 

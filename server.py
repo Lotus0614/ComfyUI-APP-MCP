@@ -36,6 +36,20 @@ def _format_template_result(result: dict) -> str:
     )
 
 
+def _queue_prompt_ids(queue: dict, key: str) -> set[str]:
+    """Extract prompt IDs from a ComfyUI queue response."""
+    prompt_ids = set()
+    for item in queue.get(key, []):
+        prompt_id = None
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            prompt_id = item[1]
+        elif isinstance(item, dict):
+            prompt_id = item.get("prompt_id") or item.get("id")
+        if prompt_id is not None:
+            prompt_ids.add(str(prompt_id))
+    return prompt_ids
+
+
 def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
     """Create and configure the MCP server instance."""
     if client is None:
@@ -51,6 +65,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "Use list_templates to discover templates, get_template for parameters, "
             "then run_template for one task or run_templates for multiple tasks in one call. "
             "run_templates steps may be independent or connected through bindings. "
+            "Use interrupt_task with a run_id to stop a running or queued task. "
             "Template outputs include `ref` values. "
             "When chaining templates, pass the ref string into the next call's bindings parameter. "
             "NEVER use upload_image for template outputs - use bindings instead."
@@ -356,6 +371,67 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             logger.error(f"[MCP] get_template_result error: {e}")
             return json.dumps({"error": str(e)})
 
+    @mcp.tool()
+    async def interrupt_task(run_id: str) -> str:
+        """Interrupt a running task or remove a queued task.
+
+        Use the run_id returned by run_template(wait=false) or by a timed-out run.
+        A running task is interrupted through ComfyUI's interrupt endpoint. A task
+        that has not started is removed from the pending queue instead.
+
+        Args:
+            run_id: The run_id of the task to interrupt.
+        """
+        run_id = run_id.strip()
+        logger.info(f"[MCP] interrupt_task(run_id={run_id!r})")
+        if not run_id:
+            return json.dumps({"error": "run_id must not be empty"})
+
+        try:
+            queue = await client.get_queue()
+            running_ids = _queue_prompt_ids(queue, "queue_running")
+            pending_ids = _queue_prompt_ids(queue, "queue_pending")
+
+            # Newer ComfyUI versions provide an atomic ID-based cancellation
+            # endpoint. Prefer it to avoid the race inherent in the legacy
+            # get-queue-then-interrupt sequence.
+            cancelled = await client.cancel_job(run_id)
+            if cancelled is not None:
+                if cancelled:
+                    status = "interrupted" if run_id in running_ids else "cancelled"
+                    logger.info(f"[MCP] interrupt_task → {status} task {run_id}")
+                    return json.dumps({"status": status, "run_id": run_id})
+
+                history = await client.get_history(run_id)
+                if run_id in history:
+                    logger.info(f"[MCP] interrupt_task → task already finished {run_id}")
+                    return json.dumps({"status": "already_finished", "run_id": run_id})
+
+                logger.warning(f"[MCP] interrupt_task → task not found: {run_id}")
+                return json.dumps({"error": f"Task '{run_id}' not found", "run_id": run_id})
+
+            # Compatibility path for ComfyUI versions without /api/jobs.
+            if run_id in running_ids:
+                await client.interrupt()
+                logger.info(f"[MCP] interrupt_task → interrupted running task {run_id}")
+                return json.dumps({"status": "interrupted", "run_id": run_id})
+
+            if run_id in pending_ids:
+                await client.delete_queue_items([run_id])
+                logger.info(f"[MCP] interrupt_task → cancelled queued task {run_id}")
+                return json.dumps({"status": "cancelled", "run_id": run_id})
+
+            history = await client.get_history(run_id)
+            if run_id in history:
+                logger.info(f"[MCP] interrupt_task → task already finished {run_id}")
+                return json.dumps({"status": "already_finished", "run_id": run_id})
+
+            logger.warning(f"[MCP] interrupt_task → task not found: {run_id}")
+            return json.dumps({"error": f"Task '{run_id}' not found", "run_id": run_id})
+        except Exception as e:
+            logger.error(f"[MCP] interrupt_task error: {e}")
+            return json.dumps({"error": str(e), "run_id": run_id})
+
     # ── Resources ───────────────────────────────────────────
 
     @mcp.resource("comfyui://system")
@@ -394,6 +470,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"
             "   - By default, the call waits for completion and returns results directly.\n"
             "   - Set `wait=false` to return immediately with a `run_id` for later polling.\n"
+            "   - Call `interrupt_task('<run-id>')` to stop a running or queued task.\n"
             "   - Each output includes a ready-to-use `ref` for chaining.\n"
             "5. Call `run_templates('{\"steps\": [...]}')` to run multiple tasks in one call. "
             "Steps can be independent, or connected through bindings when one depends on another.\n\n"

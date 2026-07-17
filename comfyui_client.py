@@ -1,6 +1,7 @@
 """ComfyUI API client — wraps HTTP endpoints used by the MCP server."""
 
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -76,7 +77,37 @@ class ComfyUIClient:
 
     async def interrupt(self) -> None:
         async with httpx.AsyncClient(trust_env=False) as client:
-            await client.post(f"{self.base_url}/interrupt", headers=self.headers, timeout=10)
+            resp = await client.post(f"{self.base_url}/interrupt", headers=self.headers, timeout=10)
+            resp.raise_for_status()
+
+    async def cancel_job(self, prompt_id: str) -> bool | None:
+        """Atomically cancel a job by ID when supported by ComfyUI.
+
+        Returns ``None`` when the endpoint is unavailable, allowing callers to
+        fall back to the legacy queue and interrupt endpoints.
+        """
+        encoded_prompt_id = quote(prompt_id, safe="")
+        async with httpx.AsyncClient(trust_env=False) as client:
+            resp = await client.post(
+                f"{self.base_url}/api/jobs/{encoded_prompt_id}/cancel",
+                headers=self.headers,
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return bool(resp.json().get("cancelled", False))
+
+    async def delete_queue_items(self, prompt_ids: list[str]) -> None:
+        """Remove pending prompts from the ComfyUI queue."""
+        async with httpx.AsyncClient(trust_env=False) as client:
+            resp = await client.post(
+                f"{self.base_url}/queue",
+                headers=self.headers,
+                json={"delete": prompt_ids},
+                timeout=10,
+            )
+            resp.raise_for_status()
 
     # ── User data / workflows ──────────────────────────────
 

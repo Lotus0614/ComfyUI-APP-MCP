@@ -11,6 +11,7 @@ This page describes MCP tool parameters, return formats, and recommended usage.
 3. If `description` points to extra docs, call `read_template_doc(name, title)`.
 4. Call `run_template()` for one task, or `run_templates()` for multiple independent or connected tasks.
 5. If a run times out, continue with `get_template_result()`.
+6. If an async or timed-out run is no longer needed, stop it with `interrupt_task()`.
 
 ## Tool Summary
 
@@ -24,6 +25,7 @@ This page describes MCP tool parameters, return formats, and recommended usage.
 | `upload_image(source)` | Upload a new image provided by the user |
 | `list_models(folder, keywords)` | Browse model folders or files |
 | `get_template_result(name, run_id, wait, timeout)` | Poll or continue waiting for a result |
+| `interrupt_task(run_id)` | Interrupt a running task or remove a queued task |
 
 ## `list_templates()`
 
@@ -265,6 +267,17 @@ Polls execution status or continues waiting for a result.
 - `wait=false`: returns current status immediately.
 - `wait=true`: blocks until completion or timeout.
 - `timeout`: wait timeout in seconds.
+
+## `interrupt_task(run_id)`
+
+Stops a task using the `run_id` returned by `run_template(wait=false)` or a timed-out run.
+
+- If the task is running, requests an interrupt and returns `{"status": "interrupted", "run_id": "..."}`.
+- If the task is still queued, removes it from the pending queue and returns `{"status": "cancelled", "run_id": "..."}`.
+- If the task already finished, returns `{"status": "already_finished", "run_id": "..."}` without interrupting anything.
+- If the task cannot be found, returns an `error`.
+
+On newer ComfyUI versions, the tool uses the atomic ID-based cancellation endpoint. When that endpoint is unavailable on an older version, it falls back to the global interrupt endpoint after checking that `run_id` is in the running queue; if the older instance executes multiple tasks concurrently, the interrupt request may affect other running tasks on that instance.
 
 ## ComfyUI Frontend Management
 

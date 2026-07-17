@@ -80,6 +80,7 @@ http://127.0.0.1:8189/mcp
 | `upload_image(source)`           | 上传用户提供的新图片         | 图片来自用户本地、URL 或 base64 时   |
 | `list_models(folder, keywords)`  | 查询模型目录                 | 需要选择 checkpoint、LoRA、VAE 时    |
 | `get_template_result()`          | 查询或继续等待结果           | `run_template` 超时或异步等待时      |
+| `interrupt_task(run_id)`         | 中断运行中或排队中的任务     | 不再需要某次异步或超时任务时         |
 
 完整参数、返回结构和示例见 [工具参考](./docs/zh/tools.md)。
 

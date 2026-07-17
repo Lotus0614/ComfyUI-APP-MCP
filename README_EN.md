@@ -78,6 +78,7 @@ For LAN or remote access, replace `127.0.0.1` with the actual ComfyUI/MCP host. 
 | `upload_image(source)` | Upload a new user-provided image | When the image comes from local path, URL, or base64 |
 | `list_models(folder, keywords)` | Browse model folders | When selecting checkpoints, LoRAs, VAEs, etc. |
 | `get_template_result()` | Poll or continue waiting | When a run times out or is async |
+| `interrupt_task(run_id)` | Interrupt a running or queued task | When an async or timed-out run is no longer needed |
 
 See [Tool Reference](./docs/en/tools.md) for full parameters, return formats, and examples.
 

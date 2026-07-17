@@ -164,6 +164,20 @@
 - [ ] 执行成功
 - [ ] 执行时间明显短于默认参数
 
+### 2.5 中断运行中或排队中的任务
+
+```
+调用: run_template(name="anima mcp.app", params='{"提示词": "..."}', wait=false)
+调用: interrupt_task(run_id="<上一步的 run_id>")
+```
+
+**验证点：**
+- [ ] 运行中的任务返回 `status: "interrupted"`，且 ComfyUI 停止执行
+- [ ] 排队中的任务返回 `status: "cancelled"`，且任务从队列移除
+- [ ] 对已完成任务调用时返回 `status: "already_finished"`
+- [ ] 使用未知 `run_id` 时返回 `error`，不会中断其他任务
+- [ ] 使用空 `run_id` 时返回 `run_id must not be empty`
+
 ---
 
 ## 三、Binding（跨模板）
