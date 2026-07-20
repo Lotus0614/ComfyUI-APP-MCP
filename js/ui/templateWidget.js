@@ -110,6 +110,7 @@ function createTemplateRow(template, reloadTemplates) {
                 body: JSON.stringify({
                     workflow: workflowContent,
                     api_prompt: apiPrompt,
+                    title: infoData.title,
                     inputs: infoData.inputs,
                     outputs: infoData.outputs,
                     description: infoData.description,
