@@ -25,6 +25,7 @@ _runtime_run_template_timeout: float | None = None
 _runtime_update_doc_enabled: bool | None = None
 _runtime_max_concurrency: int | None = None
 _runtime_embed_workflow_metadata: bool | None = None
+_runtime_comfyui_api_url: str | None = None
 
 
 def configure(config_path: str | os.PathLike[str] | None = None) -> None:
@@ -84,7 +85,13 @@ def get_comfyui_api_url() -> str:
     """URL used by MCP to call ComfyUI HTTP APIs."""
     comfyui = _section("comfyui")
     url = os.environ.get("COMFYUI_URL") or comfyui.get("apiUrl") or comfyui.get("url")
-    return str(url or DEFAULT_COMFYUI_URL).rstrip("/")
+    return str(url or _runtime_comfyui_api_url or DEFAULT_COMFYUI_URL).rstrip("/")
+
+
+def set_runtime_comfyui_api_url(url: str | None) -> None:
+    """Set the auto-detected ComfyUI URL used when no explicit URL is configured."""
+    global _runtime_comfyui_api_url
+    _runtime_comfyui_api_url = str(url).rstrip("/") if url else None
 
 
 def get_comfyui_public_url() -> str:

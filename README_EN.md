@@ -30,7 +30,7 @@ Wrap ComfyUI App Mode workflows as MCP tools, so AI assistants can discover temp
    - `description`: detailed description shown in template details
    - Other headings: extra docs that can be read on demand
 6. Go to **Settings → MCP Server → Templates** and click **Create from Workflow**.
-7. Connect your MCP client to `http://127.0.0.1:8188/app-mcp` or `http://127.0.0.1:8189/mcp`.
+7. Connect your MCP client to `http://127.0.0.1:<comfyui-port>/app-mcp` or `http://127.0.0.1:8189/mcp`.
 8. Ask the AI to call `list_templates()` first, then `get_template()`, `run_template()`, or `run_templates()`.
 
 After changing a workflow, click **Refresh** on the same-name template in the settings panel. If inputs changed, ask the AI to read the template again.
@@ -41,7 +41,7 @@ If a workflow should use a random seed on every run, name the corresponding App 
 
 | Entry | URL | Notes |
 | --- | --- | --- |
-| ComfyUI proxy entry | `http://127.0.0.1:8188/app-mcp` | Access MCP through the ComfyUI port |
+| ComfyUI proxy entry | `http://127.0.0.1:<comfyui-port>/app-mcp` | Access MCP through the ComfyUI port |
 | Direct MCP entry | `http://127.0.0.1:8189/mcp` | Starts with ComfyUI and works the same way |
 
 MCP client config example:
@@ -50,7 +50,7 @@ MCP client config example:
 {
   "mcpServers": {
     "comfyui": {
-      "url": "http://127.0.0.1:8188/app-mcp"
+      "url": "http://127.0.0.1:<comfyui-port>/app-mcp"
     }
   }
 }
@@ -85,7 +85,6 @@ See [Tool Reference](./docs/en/tools.md) for full parameters, return formats, an
 
 In **Settings → MCP Server**, you can:
 
-- View MCP status and connection URLs
 - Configure the default `run_template(wait=true)` timeout
 - Create, refresh, enable, disable, and delete templates
 - Scan workflows and create missing templates
@@ -116,10 +115,10 @@ For a new image provided by the user, call `upload_image()` first and use the re
 
 ### Workflow Not Found When Creating a Template
 
-Check whether ComfyUI is running on port `8188`. The plugin reads workflows through `COMFYUI_URL=http://127.0.0.1:8188` by default. If your ComfyUI port is not `8188`, set it before startup:
+Plugin mode automatically reads ComfyUI's actual startup port, so custom ports require no extra configuration. To override the auto-detected address, set this before startup:
 
 ```bash
-COMFYUI_URL=http://127.0.0.1:<your-port>
+COMFYUI_URL=http://<comfyui-host>:<port>
 ```
 
 ### Images Cannot Be Sent Through AstrBot or Similar Platforms

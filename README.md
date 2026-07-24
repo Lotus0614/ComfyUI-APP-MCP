@@ -32,7 +32,7 @@
    - `description`：模板详细说明，显示在模板详情中
    - 其他标题：作为可按需读取的模板文档
 6. 在 **Settings → MCP Server → Templates** 点击 **Create from Workflow** 创建模板。
-7. 在 MCP 客户端连接 `http://127.0.0.1:8188/app-mcp` 或 `http://127.0.0.1:8189/mcp`。
+7. 在 MCP 客户端连接 `http://127.0.0.1:<ComfyUI 端口>/app-mcp` 或 `http://127.0.0.1:8189/mcp`。
 8. 让 AI 先调用 `list_templates()`，再调用 `get_template()`、`run_template()` 或 `run_templates()`。
 
 工作流变更后，在设置面板对同名模板点击 **Refresh**。如果输入参数发生变化，提醒 AI 重新读取模板。
@@ -43,7 +43,7 @@
 
 | 入口             | 地址                            | 说明                                |
 | ---------------- | ------------------------------- | ----------------------------------- |
-| ComfyUI 代理入口 | `http://127.0.0.1:8188/app-mcp` | 通过 ComfyUI 端口访问 MCP           |
+| ComfyUI 代理入口 | `http://127.0.0.1:<ComfyUI 端口>/app-mcp` | 通过 ComfyUI 端口访问 MCP           |
 | MCP 直接入口     | `http://127.0.0.1:8189/mcp`     | 随 ComfyUI 一起启动，和上面用法一致 |
 
 MCP 客户端配置示例：
@@ -52,7 +52,7 @@ MCP 客户端配置示例：
 {
   "mcpServers": {
     "comfyui": {
-      "url": "http://127.0.0.1:8188/app-mcp"
+      "url": "http://127.0.0.1:<ComfyUI 端口>/app-mcp"
     }
   }
 }
@@ -87,7 +87,6 @@ http://127.0.0.1:8189/mcp
 
 在 **Settings → MCP Server** 中可以：
 
-- 查看 MCP 服务状态和连接地址
 - 设置 `run_template(wait=true)` 默认等待超时
 - 创建、刷新、启用、禁用、删除模板
 - 扫描工作流并自动创建缺失模板
@@ -118,10 +117,10 @@ http://127.0.0.1:8189/mcp
 
 ### 创建模板时找不到工作流
 
-确认 ComfyUI 是否运行在 `8188` 端口。插件默认通过 `COMFYUI_URL=http://127.0.0.1:8188` 读取工作流；如果你的 ComfyUI 端口不是 `8188`，启动前设置：
+插件模式会自动读取 ComfyUI 的实际启动端口，使用自定义端口时无需额外配置。如果需要覆盖自动检测的地址，可在启动前设置：
 
 ```bash
-COMFYUI_URL=http://127.0.0.1:<你的端口>
+COMFYUI_URL=http://<ComfyUI 主机>:<端口>
 ```
 
 ### 接入 AstrBot 等平台后图片发不出来

@@ -270,7 +270,6 @@ Polls execution status or continues waiting for a result.
 
 In **Settings → MCP Server**:
 
-- **Status**: view MCP server status and connection URLs
 - **Execution → Run Template Timeout**: configure the default timeout for `run_template(wait=true)`
 - **Templates**: view, refresh, enable, disable, and delete templates
 - **Auto Extract Templates**: scan workflows and create templates for workflows with a `title` Markdown Note

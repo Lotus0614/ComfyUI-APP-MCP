@@ -5,8 +5,21 @@
 ## 前置条件
 
 - [ ] ComfyUI 已启动
-- [ ] MCP 服务端点可访问：`http://127.0.0.1:8188/app-mcp`
+- [ ] MCP 服务端点可访问：`http://127.0.0.1:<ComfyUI 端口>/app-mcp`
 - [ ] 至少有一个可用模板（如 `anima mcp.app`）
+
+---
+
+## 零、插件地址检测
+
+1. 不设置 `COMFYUI_URL`，使用 `python main.py --port 9000` 启动 ComfyUI。
+2. 通过 `http://127.0.0.1:9000/app-mcp` 调用 `list_templates()` 和 `run_template()`。
+
+**验证点：**
+- [ ] 工作流列表、节点定义和队列访问不会连接 `8188`
+- [ ] 模板可正常执行并返回结果
+- [ ] 通过反向代理访问时，媒体结果使用 `X-Forwarded-Proto` 和 `X-Forwarded-Host` 生成公开地址
+- [ ] 显式设置 `COMFYUI_URL` 后，该地址优先于自动检测值
 
 ---
 
