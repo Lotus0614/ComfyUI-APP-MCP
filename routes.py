@@ -41,14 +41,14 @@ def _comfyui_client() -> ComfyUIClient:
     )
 
 
-@PromptServer.instance.routes.get(f"{API_PREFIX}/status")
-async def mcp_status(request):
-    """Return MCP server status and endpoint URL."""
-    getters = _setting_getters()
-    return web.json_response({
-        "mcp_url": "http://127.0.0.1:8188/app-mcp",
-        **{key: getter() for key, getter in getters.items()},
-    })
+def _request_comfyui_url(request: web.Request) -> str:
+    """Return the externally visible ComfyUI URL for an inbound request."""
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.host)
+    # Proxies may append a comma-separated chain; the first value is client-facing.
+    scheme = scheme.split(",", 1)[0].strip()
+    host = host.split(",", 1)[0].strip()
+    return f"{scheme}://{host}"
 
 
 @PromptServer.instance.routes.get(f"{API_PREFIX}/settings/{{key}}")
@@ -380,9 +380,7 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
     for k, v in request.headers.items():
         if k.lower() not in _HOP_BY_HOP:
             headers[k] = v
-    scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
-    host = request.headers.get("X-Forwarded-Host", request.host)
-    headers["comfyui_url"] = f"{scheme}://{host}"
+    headers["comfyui_url"] = _request_comfyui_url(request)
     return headers
 
 

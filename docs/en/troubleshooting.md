@@ -30,12 +30,12 @@ Check:
 
 ## Workflow Not Found When Creating a Template
 
-The plugin reads workflow lists from the ComfyUI API through `COMFYUI_URL=http://127.0.0.1:8188` by default.
+Plugin mode automatically reads ComfyUI's actual startup port and accesses its API through the local loopback address.
 
-If ComfyUI is not running on port `8188`, set this before startup:
+To override the auto-detected address, set this before startup:
 
 ```bash
-COMFYUI_URL=http://127.0.0.1:<your-port>
+COMFYUI_URL=http://<comfyui-host>:<port>
 ```
 
 For standalone deployments, you can also set `comfyui.apiUrl` in `mcp.config.json`. See [Standalone and Remote Access](./standalone.md).

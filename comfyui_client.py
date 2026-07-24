@@ -5,11 +5,15 @@ from uuid import uuid4
 
 import httpx
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8188"
-
 
 class ComfyUIClient:
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, headers: dict[str, str] | None = None):
+    def __init__(self, base_url: str | None = None, headers: dict[str, str] | None = None):
+        if base_url is None:
+            try:
+                from . import config
+            except ImportError:
+                import config
+            base_url = config.get_comfyui_api_url()
         self.base_url = base_url.rstrip("/")
         self.headers = headers or {}
 

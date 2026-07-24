@@ -30,12 +30,12 @@ MCP 调用会在 ComfyUI 控制台打印，以 `[MCP]` 为前缀：
 
 ## 创建模板时找不到工作流
 
-插件默认通过 `COMFYUI_URL=http://127.0.0.1:8188` 访问 ComfyUI API 并读取工作流列表。
+插件模式会自动读取 ComfyUI 的实际启动端口，并通过本机回环地址访问 ComfyUI API。
 
-如果 ComfyUI 不是运行在 `8188` 端口，启动前设置：
+如果需要覆盖自动检测的地址，启动前设置：
 
 ```bash
-COMFYUI_URL=http://127.0.0.1:<你的端口>
+COMFYUI_URL=http://<ComfyUI 主机>:<端口>
 ```
 
 如果是独立部署，也可以在 `mcp.config.json` 中设置 `comfyui.apiUrl`。详见 [独立部署与远程访问](./standalone.md)。

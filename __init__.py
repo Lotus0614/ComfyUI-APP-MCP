@@ -9,7 +9,7 @@ An internal MCP server runs on localhost and requests are proxied through.
 Environment variables:
   MCP_PORT    — Internal MCP server port (default: 8189, proxied via /app-mcp)
   MCP_HOST    — Internal MCP server bind host (default: 127.0.0.1)
-  COMFYUI_URL — ComfyUI API base URL (default: http://127.0.0.1:8188)
+  COMFYUI_URL — Optional override for the auto-detected ComfyUI API URL
 """
 
 import asyncio
@@ -28,6 +28,20 @@ WEB_DIRECTORY = "./js"
 
 MCP_PORT = config.get_mcp_port()
 MCP_HOST = config.get_mcp_host()
+
+
+def _configure_comfyui_api_url() -> str:
+    """Use ComfyUI's actual startup port for same-process API calls."""
+    from comfy.cli_args import args as comfy_args
+
+    use_tls = bool(
+        getattr(comfy_args, "tls_keyfile", None)
+        and getattr(comfy_args, "tls_certfile", None)
+    )
+    scheme = "https" if use_tls else "http"
+    url = f"{scheme}://127.0.0.1:{comfy_args.port}"
+    config.set_runtime_comfyui_api_url(url)
+    return config.get_comfyui_api_url()
 
 
 async def _run_mcp_background():
@@ -57,6 +71,11 @@ class MCPExtension(ComfyExtension):
 
 async def comfy_entrypoint() -> MCPExtension:
     """ComfyUI V3 entry point — starts the MCP background server."""
+    comfyui_api_url = _configure_comfyui_api_url()
     asyncio.create_task(_run_mcp_background())
-    logger.info(f"ComfyUI MCP Server plugin loaded (port {MCP_PORT})")
+    logger.info(
+        "ComfyUI MCP Server plugin loaded (MCP port %s, ComfyUI API %s)",
+        MCP_PORT,
+        comfyui_api_url,
+    )
     return MCPExtension()

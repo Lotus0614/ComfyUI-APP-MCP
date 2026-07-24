@@ -270,7 +270,6 @@ result2 = run_template(
 
 在 **Settings → MCP Server** 中：
 
-- **Status**：查看 MCP 服务状态和连接地址
 - **Execution → Run Template Timeout**：设置 `run_template(wait=true)` 默认等待超时
 - **Templates**：查看、刷新、启用、禁用、删除模板
 - **Auto Extract Templates**：扫描工作流，为包含 `title` Markdown Note 且尚未存在模板的工作流创建模板
