@@ -19,8 +19,8 @@ This page describes MCP tool parameters, return formats, and recommended usage.
 | `list_templates()` | List available templates with names and titles only |
 | `get_template(name)` | Read template inputs, outputs, description, and doc titles |
 | `read_template_doc(name, title)` | Read a specific template doc section |
-| `run_template(name, params, wait, bindings)` | Run one template |
-| `run_templates(pipeline, timeout_per_step)` | Run multiple tasks sequentially with optional bindings |
+| `run_template(name, params, wait)` | Run one template |
+| `run_templates(pipeline, timeout_per_step)` | Run multiple tasks sequentially, connected via inline refs |
 | `upload_image(source)` | Upload a new image provided by the user |
 | `list_models(folder, keywords)` | Browse model folders or files |
 | `get_template_result(name, run_id, wait, timeout)` | Poll or continue waiting for a result |
@@ -70,16 +70,15 @@ Parameters:
 
 Use Markdown Notes for detailed prompt rules, examples, and caveats. Mention the doc title in `description` when the AI should read it on demand.
 
-## `run_template(name, params, wait=true, bindings="{}")`
+## `run_template(name, params, wait=true)`
 
 Runs one template.
 
 Parameters:
 
 - `name`: template name
-- `params`: JSON string for template inputs, for example `'{"prompt": "a cat"}'`
+- `params`: JSON string for template inputs, for example `'{"prompt": "a cat"}'`. Any string value may embed references inline as `@{<ref>}` (see [Inline References](#inline-references-ref)).
 - `wait`: whether to wait for completion, default `true`
-- `bindings`: JSON string mapping input names to historical output refs
 
 For `wait=true`, the default timeout is controlled by **Settings → MCP Server → Execution → Run Template Timeout** and defaults to `120` seconds.
 
@@ -109,7 +108,7 @@ Notes:
 - Text outputs include `type`, `value`, and `ref`.
 - Media outputs such as images, audio, and GIFs include `type`, `url`, `ref`, and `markdown`.
 - `markdown` is returned only when a media resource should be displayed. Plain text outputs do not include it.
-- `ref` is an opaque reference that can be passed directly into the next call's `bindings`.
+- `ref` is an opaque reference that can be embedded inline in the next call's `params` as `@{<ref>}`.
 
 ### Timeout Result
 
@@ -126,9 +125,14 @@ Notes:
 
 A timeout does not mean the generation failed. Continue waiting with `get_template_result(name, run_id, wait=true)`.
 
-## Bindings
+## Inline References (`@{ref}`)
 
-When processing template-generated images, use the output `ref`. Do not download and upload the image again.
+Any string value in `params` may embed a reference inline as `@{<ref>}`, where `<ref>` is the exact `result://...` (from `run_template`) or `step://...` (from `run_templates`) string returned in a prior output's `ref` field.
+
+- **Text outputs** are substituted as-is, enabling free concatenation: `{"prompt": "Caption: @{result://abc-123/caption/0}. Style: anime"}`
+- **Image/GIF outputs** resolve to an uploaded filename and should be used as the whole value of an image input: `{"image": "@{result://abc-123/output_image/0}"}`
+
+This is how template-generated images are passed between calls — never download and re-upload them with `upload_image()`.
 
 Single-step chaining example:
 
@@ -137,8 +141,7 @@ result1 = run_template("txt2img.app", '{"prompt": "a cute cat"}')
 
 result2 = run_template(
     "upscale.app",
-    '{}',
-    bindings='{"image": "result://abc-123/output_image/0"}'
+    '{"image": "@{result://abc-123/output_image/0}"}'
 )
 ```
 
@@ -146,7 +149,7 @@ result2 = run_template(
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
-Runs multiple tasks sequentially in one call and returns every step's complete result. Steps may be independent; use `bindings` only when a later task depends on an earlier output.
+Runs multiple tasks sequentially in one call and returns every step's complete result. Steps may be independent; embed an earlier output's `ref` inline (`@{step://...}`) only when a later task depends on it.
 
 Multiple independent tasks:
 
@@ -167,7 +170,7 @@ Multiple independent tasks:
 }
 ```
 
-Add `bindings` only when a task needs an earlier output:
+Reference an earlier output inline only when a task needs it:
 
 ```json
 {
@@ -183,10 +186,8 @@ Add `bindings` only when a task needs an earlier output:
       "id": "upscale",
       "template": "upscale",
       "params": {
+        "image": "@{step://generate/output_image/0}",
         "scale": 2
-      },
-      "bindings": {
-        "image": "step://generate/output_image/0"
       }
     }
   ]
@@ -232,9 +233,9 @@ On success, every step includes a complete result with the same structure as `ru
 Notes:
 
 - `timeout_per_step` is the timeout for each step in seconds.
-- Without `bindings`, steps are independent tasks.
-- `run_templates()` uses `step://<step-id>/<output-name>/<index>`.
-- A normal `run_template()` result uses `result://`.
+- Steps that don't reference each other are independent tasks.
+- `run_templates()` uses `step://<step-id>/<output-name>/<index>` refs.
+- A normal `run_template()` result uses `result://` refs.
 - Every step includes `id`, `template`, and the same `status`, `outputs`, `error`, `run_id`, and related result fields as a single-template run.
 - The top level only describes pipeline status and does not duplicate the final step output.
 

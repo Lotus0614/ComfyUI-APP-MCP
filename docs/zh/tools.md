@@ -19,8 +19,8 @@
 | `list_templates()` | 列出可用模板，只返回名称和标题 |
 | `get_template(name)` | 获取模板输入、输出、描述和可读取文档标题 |
 | `read_template_doc(name, title)` | 读取模板文档中的指定章节 |
-| `run_template(name, params, wait, bindings)` | 执行单个模板 |
-| `run_templates(pipeline, timeout_per_step)` | 一次顺序运行多个任务，可选绑定前序输出 |
+| `run_template(name, params, wait)` | 执行单个模板 |
+| `run_templates(pipeline, timeout_per_step)` | 一次顺序运行多个任务，用内联引用串联 |
 | `upload_image(source)` | 上传用户提供的新图片 |
 | `list_models(folder, keywords)` | 查询模型目录或模型文件 |
 | `get_template_result(name, run_id, wait, timeout)` | 查询或继续等待执行结果 |
@@ -70,16 +70,15 @@
 
 建议把详细提示词规则、示例、注意事项放到 Markdown Note 中，通过 `description` 提醒 AI 在需要时读取。
 
-## `run_template(name, params, wait=true, bindings="{}")`
+## `run_template(name, params, wait=true)`
 
 执行单个模板。
 
 参数：
 
 - `name`：模板名称
-- `params`：JSON 字符串，填写模板输入参数，例如 `'{"prompt": "a cat"}'`
+- `params`：JSON 字符串，填写模板输入参数，例如 `'{"prompt": "a cat"}'`。任意字符串值都可用 `@{<ref>}` 内联嵌入引用（见 [内联引用](#内联引用-ref)）。
 - `wait`：是否等待执行完成，默认 `true`
-- `bindings`：JSON 字符串，把输入参数名映射到历史输出 `ref`
 
 `wait=true` 时，默认等待超时由 **Settings → MCP Server → Execution → Run Template Timeout** 控制，默认 `120` 秒。
 
@@ -109,7 +108,7 @@
 - 文本输出包含 `type`、`value`、`ref`。
 - 图片、音频、GIF 等媒体输出包含 `type`、`url`、`ref`、`markdown`。
 - `markdown` 只在需要展示媒体资源时返回，纯文本输出不会带该字段。
-- `ref` 是不透明引用，可直接用于下一次调用的 `bindings`。
+- `ref` 是不透明引用，可在下一次调用的 `params` 中以 `@{<ref>}` 内联嵌入。
 
 ### 超时结果
 
@@ -126,9 +125,14 @@
 
 超时不代表任务失败。继续调用 `get_template_result(name, run_id, wait=true)` 即可等待同一次运行。
 
-## Bindings 串联
+## 内联引用 (`@{ref}`)
 
-处理模板生成的图片时，必须使用输出里的 `ref`，不要先下载再上传。
+`params` 里的任意字符串值都可用 `@{<ref>}` 内联嵌入引用，其中 `<ref>` 是上游输出 `ref` 字段里返回的完整字符串：`run_template` 用 `result://...`，`run_templates` 内部用 `step://...`。
+
+- **文字输出**会原样替换，可自由拼接：`{"prompt": "说明: @{result://abc-123/描述/0}. 风格: 动漫"}`
+- **图片/GIF 输出**解析为上传后的文件名，应作为图片输入的整值：`{"image": "@{result://abc-123/输出图片/0}"}`
+
+模板生成的图片就这样在调用之间传递——不要用 `upload_image()` 先下载再上传。
 
 单步串联示例：
 
@@ -137,8 +141,7 @@ result1 = run_template("txt2img.app", '{"prompt": "a cute cat"}')
 
 result2 = run_template(
     "upscale.app",
-    '{}',
-    bindings='{"image": "result://abc-123/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0"}'
+    '{"image": "@{result://abc-123/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0}"}'
 )
 ```
 
@@ -146,7 +149,7 @@ result2 = run_template(
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
-一次调用中按顺序执行多个任务，并返回每一步的完整结果。步骤可以彼此独立；只有后续任务依赖前序输出时，才需要配置 `bindings`。
+一次调用中按顺序执行多个任务，并返回每一步的完整结果。步骤可以彼此独立；只有后续任务依赖前序输出时，才把前序输出的 `ref` 用 `@{step://...}` 内联嵌入。
 
 多个独立任务示例：
 
@@ -167,7 +170,7 @@ result2 = run_template(
 }
 ```
 
-需要使用前序输出时，再添加 `bindings`：
+只有任务需要前序输出时，才内联引用它：
 
 ```json
 {
@@ -183,10 +186,8 @@ result2 = run_template(
       "id": "upscale",
       "template": "upscale",
       "params": {
+        "image": "@{step://generate/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0}",
         "scale": 2
-      },
-      "bindings": {
-        "image": "step://generate/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0"
       }
     }
   ]
@@ -232,8 +233,8 @@ result2 = run_template(
 说明：
 
 - `timeout_per_step` 是每一步超时时间，单位秒。
-- 不配置 `bindings` 时，各步骤是相互独立的任务。
-- `run_templates()` 内部使用 `step://<步骤 id>/<输出名>/<索引>`。
+- 互不引用的步骤就是相互独立的任务。
+- `run_templates()` 内部使用 `step://<步骤 id>/<输出名>/<索引>` 引用。
 - 普通 `run_template()` 返回的引用使用 `result://`。
 - 每个 step 都包含 `id`、`template`，以及和单模板执行一致的 `status`、`outputs`、`error`、`run_id` 等结果字段。
 - 顶层只描述流水线整体状态，不重复返回最后一步输出。

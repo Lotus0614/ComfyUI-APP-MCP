@@ -23,7 +23,7 @@ JavaScript uses ES modules, four-space indentation, single quotes, trailing comm
 
 ## Testing Guidelines
 
-The project relies on manual integration testing. Follow `TEST_PLAN.md`, especially template discovery, synchronous and asynchronous execution, bindings, pipelines, uploads, and error cases. Test against a running ComfyUI instance with representative templates. Record the ComfyUI version, configuration, and results when reporting failures.
+The project relies on manual integration testing. Follow `TEST_PLAN.md`, especially template discovery, synchronous and asynchronous execution, inline `@{ref}` references, pipelines, uploads, and error cases. Test against a running ComfyUI instance with representative templates. Record the ComfyUI version, configuration, and results when reporting failures.
 
 ## Commit & Pull Request Guidelines
 

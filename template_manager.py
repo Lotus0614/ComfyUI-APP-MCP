@@ -26,7 +26,8 @@ _comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar
     "_comfyui_public_url", default=None
 )
 
-# Module-level cache for public output bindings, keyed by prompt_id.
+# Module-level cache for public outputs (keyed by prompt_id), used to resolve
+# inline @{result://...} and @{step://...} references.
 _mcp_outputs_cache: dict[str, dict] = {}
 
 _SEED_INPUT_NAME = "seed"
@@ -802,7 +803,7 @@ async def _upload_media_to_input(media_item: dict) -> dict:
     return await client.upload_image_bytes(filename or "pipeline_input.png", image_bytes)
 
 
-async def _resolve_binding_value(outputs: dict, output_name: str, index: int):
+async def _resolve_output_value(outputs: dict, output_name: str, index: int):
     """Resolve one public output reference to a template parameter value."""
     if output_name not in outputs:
         raise ValueError(f"Output '{output_name}' not found")
@@ -825,27 +826,88 @@ async def _resolve_binding_value(outputs: dict, output_name: str, index: int):
     return media_item.get("url", "")
 
 
-async def _resolve_run_bindings(bindings: dict) -> dict:
-    if not isinstance(bindings, dict):
-        raise ValueError("bindings must be an object")
+async def _resolve_inline_ref(ref: str, step_results: dict | None = None):
+    """Resolve a single `result://` or `step://` output reference to a value.
 
-    resolved_params = {}
-    for param_name, ref in bindings.items():
-        if not isinstance(ref, str):
-            raise ValueError(f"Binding for param '{param_name}' must be a result:// reference string")
-        prompt_id, output_name, index = _parse_output_ref(ref, "result")
-        outputs = _mcp_outputs_cache.get(prompt_id)
-        if not isinstance(outputs, dict):
-            entry = await _fetch_history_entry(prompt_id)
-            outputs = entry.get("mcp_outputs") if entry else None
-        if not isinstance(outputs, dict):
-            raise ValueError(f"Result '{prompt_id}' is unavailable for binding")
-        resolved_params[param_name] = await _resolve_binding_value(outputs, output_name, index)
-    return resolved_params
+    Dispatches on scheme: `step://` looks up ``step_results[source_step]``;
+    `result://` consults the in-memory cache with a history fallback.
+    Raises ``ValueError`` on parse/lookup failure; the caller decides whether
+    to raise or return an error dict.
+    """
+    if ref.startswith("step://"):
+        source_step, output_name, index = _parse_output_ref(ref, "step")
+        if not isinstance(step_results, dict) or source_step not in step_results:
+            raise ValueError(f"Step '{source_step}' is unavailable for reference")
+        return await _resolve_output_value(step_results[source_step], output_name, index)
+
+    prompt_id, output_name, index = _parse_output_ref(ref, "result")
+    outputs = _mcp_outputs_cache.get(prompt_id)
+    if not isinstance(outputs, dict):
+        entry = await _fetch_history_entry(prompt_id)
+        outputs = entry.get("mcp_outputs") if entry else None
+    if not isinstance(outputs, dict):
+        raise ValueError(f"Result '{prompt_id}' is unavailable for reference")
+    return await _resolve_output_value(outputs, output_name, index)
+
+
+# Inline @{ref} markers embedded in parameter string values, e.g.
+#   "Caption: @{step://caption/描述/0}. 风格: 动漫"
+# Refs are URL-encoded by _build_output_ref, so they never contain `}`.
+_INLINE_REF_RE = re.compile(r"@\{(?P<ref>(?:result|step)://[^}]*)\}")
+
+
+async def _substitute_string(s: str, step_results: dict | None = None) -> str:
+    """Replace every ``@{ref}`` occurrence in *s* with its resolved value.
+
+    Returns *s* unchanged when it contains no inline refs. Resolutions run
+    concurrently; each distinct ref is resolved once per call (memoized) so the
+    same image is not re-downloaded/re-uploaded multiple times.
+    """
+    matches = list(_INLINE_REF_RE.finditer(s))
+    if not matches:
+        return s
+
+    resolved: dict[str, str] = {}
+    pending: list[str] = []
+    for m in matches:
+        ref = m.group("ref")
+        if ref not in resolved and ref not in pending:
+            pending.append(ref)
+
+    if pending:
+        values = await asyncio.gather(*(_resolve_inline_ref(r, step_results) for r in pending))
+        for ref, value in zip(pending, values):
+            resolved[ref] = "" if value is None else str(value)
+
+    out: list[str] = []
+    last = 0
+    for m in matches:
+        out.append(s[last:m.start()])
+        out.append(resolved[m.group("ref")])
+        last = m.end()
+    out.append(s[last:])
+    return "".join(out)
+
+
+async def _apply_inline_refs(value, step_results: dict | None = None):
+    """Recursively resolve ``@{ref}`` markers inside parameter values.
+
+    Strings are substituted; lists/tuples and dict values are walked; every
+    other type (int/float/bool/None/…) is returned unchanged.
+    """
+    if isinstance(value, str):
+        return await _substitute_string(value, step_results)
+    if isinstance(value, list):
+        return [await _apply_inline_refs(v, step_results) for v in value]
+    if isinstance(value, tuple):
+        return tuple(await _apply_inline_refs(v, step_results) for v in value)
+    if isinstance(value, dict):
+        return {k: await _apply_inline_refs(v, step_results) for k, v in value.items()}
+    return value
 
 
 async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
-    """Run multiple templates sequentially with explicit output-to-input bindings."""
+    """Run multiple templates sequentially; outputs are referenced inline via @{ref}."""
     steps = pipeline.get("steps")
     if not isinstance(steps, list) or not steps:
         return {"error": "pipeline.steps must be a non-empty list"}
@@ -861,7 +923,6 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
         step_id = str(raw_step.get("id", "")).strip()
         template_name = str(raw_step.get("template", "")).strip()
         params = raw_step.get("params", {})
-        bindings = raw_step.get("bindings", {})
 
         if not step_id:
             return {"error": "Each pipeline step requires a non-empty id", "steps": completed_steps}
@@ -871,36 +932,16 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
             return {"error": f"Pipeline step '{step_id}' requires a template name", "steps": completed_steps}
         if not isinstance(params, dict):
             return {"error": f"Pipeline step '{step_id}' params must be an object", "steps": completed_steps}
-        if not isinstance(bindings, dict):
-            return {"error": f"Pipeline step '{step_id}' bindings must be an object", "steps": completed_steps}
 
         seen_ids.add(step_id)
 
-        resolved_params = dict(params)
-        try:
-            for param_name, ref in bindings.items():
-                if not isinstance(ref, str):
-                    raise ValueError(f"Binding for param '{param_name}' in step '{step_id}' must be a step:// reference string")
-                source_step, output_name, index = _parse_output_ref(ref, "step")
-                if source_step not in step_results:
-                    raise ValueError(f"Pipeline step '{source_step}' is unavailable for binding")
-                resolved_params[param_name] = await _resolve_binding_value(
-                    step_results[source_step], output_name, index
-                )
-        except Exception as e:
-            completed_steps.append({
-                "id": step_id,
-                "template": template_name,
-                **build_public_execution_result({"error": str(e)}),
-            })
-            return {
-                "status": "failed",
-                "failed_step": step_id,
-                "error": str(e),
-                "steps": completed_steps,
-            }
-
-        result = await execute_template(template_name, resolved_params, wait=True, timeout=timeout_per_step)
+        result = await execute_template(
+            template_name,
+            params,
+            wait=True,
+            timeout=timeout_per_step,
+            step_results=step_results,
+        )
         step_record = {
             "id": step_id,
             "template": template_name,
@@ -1137,7 +1178,7 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
         target_node_ids = set(output_data.keys())
 
     result = {}
-    binding_outputs = {}
+    public_outputs = {}
     for node_id, node_output in output_data.items():
         if not node_output:
             continue
@@ -1170,11 +1211,11 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                     "subfolder": subfolder,
                     "item_type": item_type,
                 })
-        binding_result = {}
+        output_entry = {}
         if node_output.get("text"):
-            binding_result["text"] = node_output["text"]
+            output_entry["text"] = node_output["text"]
         if media_urls:
-            binding_result["media"] = media_urls
+            output_entry["media"] = media_urls
 
         public_result = {}
         texts = node_output.get("text", [])
@@ -1218,15 +1259,15 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
                 public_result["markdown"] = f"[{public_name}]({media_url})"
 
         result[public_name] = public_result
-        binding_outputs[public_name] = binding_result
+        public_outputs[public_name] = output_entry
 
     result_payload = {
         "status": "completed",
         "prompt_id": prompt_id,
         "outputs": result,
     }
-    entry["mcp_outputs"] = binding_outputs
-    _mcp_outputs_cache[prompt_id] = binding_outputs
+    entry["mcp_outputs"] = public_outputs
+    _mcp_outputs_cache[prompt_id] = public_outputs
     return result_payload
 
 
@@ -1259,7 +1300,7 @@ async def execute_template(
     params: dict,
     wait: bool = True,
     timeout: float = 300,
-    bindings: dict | None = None,
+    step_results: dict | None = None,
 ) -> dict:
     """Execute a template with given parameters.
 
@@ -1289,9 +1330,17 @@ async def execute_template(
         **dict(params),
     }
 
-    if bindings:
-        resolved_binding_params = await _resolve_run_bindings(bindings)
-        params.update(resolved_binding_params)
+    # Inline @{ref} substitution — resolve references embedded inside string
+    # parameter values (e.g. "Caption: @{step://caption/描述/0}"). Supports both
+    # result:// (cache/history) and step:// (step_results, passed by run_templates).
+    if step_results is not None or any(isinstance(v, str) and "@{" in v for v in params.values()):
+        new_params = {}
+        for k, v in params.items():
+            try:
+                new_params[k] = await _apply_inline_refs(v, step_results)
+            except Exception as e:
+                return {"error": f"Failed to resolve inline reference in '{k}': {e}"}
+        params = new_params
 
     # Generate API prompt
     api_prompt_data = template.get("api_prompt")

@@ -184,15 +184,15 @@
 │     └─ 模板是否禁用？                                                          │
 │         │                                                                   │
 │         ▼                                                                   │
-│  ③ 解析 bindings（如果有）                                                     │
-│     params = {"提示词": "a cute cat", "lora_loader_data": "..."}             │
-│     bindings = {"输入图片": {"from": "xxx", "output": "...", ...}}           │
+│  ③ 内联解析 @{ref}（参数里若有引用）                                            │
+│     params = {"提示词": "a cat @{step://gen/描述/0}"}                         │
 │         │                                                                   │
 │         ▼                                                                   │
-│     _resolve_run_bindings(bindings)                                          │
-│       ├─ 从 mcp_outputs_cache 获取历史结果                                    │
-│       ├─ 对 image 类型：下载 → 重传到 input 目录                               │
-│       └─ 合并到 params                                                       │
+│     _apply_inline_refs(params, step_results)                                 │
+│       ├─ step://   → 从 step_results 取上游输出                               │
+│       ├─ result:// → 从 mcp_outputs_cache 或历史取上游输出                     │
+│       ├─ image 类型：下载 → 重传到 input 目录                                  │
+│       └─ 文字原样替换；图片返回文件名                                          │
 │         │                                                                   │
 │         ▼                                                                   │
 │  ④ 注入参数到 API prompt                                                      │
@@ -234,8 +234,7 @@
 │           "media": [{ "url": "...", "type": "image", ... }],                │
 │           "markdown": "![输出图片](http://...)"                               │
 │         }                                                                   │
-│       },                                                                    │
-│       "binding_hint": { ... }                                               │
+│       }                                                                     │
 │     }                                                                       │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -289,7 +288,7 @@ template_manager.py
 ├── 执行
 │   ├── execute_template()       # 执行模板
 │   ├── _inject_widget_values()  # 注入参数（15 行）
-│   ├── _resolve_run_bindings()  # 解析 bindings
+│   ├── _apply_inline_refs()    # 解析内联 @{ref}
 │   └── _wait_for_result()       # 等待结果
 │
 └── 输出处理

@@ -120,7 +120,7 @@
 - [ ] 图片/音频输出包含 `markdown`
 - [ ] `ref` 使用 `result://` 协议
 - [ ] `url` 可以在浏览器中打开并显示图片
-- [ ] 返回结果不包含 `binding_hint`、`filename`、`subfolder`、`item_type`
+- [ ] 返回结果不包含 `filename`、`subfolder`、`item_type`
 
 ### 2.2 异步执行（wait=false）+ get_template_result
 
@@ -179,17 +179,16 @@
 
 ---
 
-## 三、Binding（跨模板）
+## 三、内联引用（跨模板 @{ref}）
 
 ### 3.1 使用 result ref 进行放大
 
 ```
 步骤1: run_template(name="anima mcp.app", params='{"提示词": "a cute anime girl"}')
-步骤2: 使用步骤1输出的 `ref`，调用:
+步骤2: 用步骤1输出的 `ref`，在 params 里内联引用:
   run_template(
     name="anima 放大 mcp.app",
-    params='{"降噪": 0.3}',
-    bindings='{"输入图片": "result://<run-id>/<输出名>/0"}'
+    params='{"输入图片": "@{result://<run-id>/<输出名>/0}", "降噪": 0.3}'
   )
 ```
 
@@ -199,12 +198,12 @@
 - [ ] 输出图片分辨率大于原图
 - [ ] 步骤2 输出包含新的 `ref`
 
-### 3.2 使用 binding 进行加密
+### 3.2 使用内联引用进行加密
 
 ```
 步骤1: run_template(name="anima mcp.app", params='{"提示词": "...", "加速Lora强度": 1, "采样cfg": 1, "采样步数": 10}')
-步骤2: 使用输出 ref，调用:
-  run_template(name="图片加密.app", params='{}', bindings='{"image": "result://<run-id>/<输出名>/0"}')
+步骤2: 用输出 ref，在 params 里内联引用:
+  run_template(name="图片加密.app", params='{"image": "@{result://<run-id>/<输出名>/0}"}')
 ```
 
 **验证点：**
@@ -215,7 +214,7 @@
 
 ```
 步骤1: 生成图片
-步骤2: 加密（使用 binding）
+步骤2: 加密（内联引用上一步输出）
 步骤3: 解密（使用步骤2 的输出 ref）
 ```
 
@@ -249,7 +248,7 @@
 ```
 
 **验证点：**
-- [ ] 两个任务都执行成功，不需要配置 `bindings`
+- [ ] 两个任务都执行成功，不需要内联引用
 - [ ] `steps` 数组有 2 个元素，每个 step 都包含完整 `outputs`
 - [ ] 两个 step 返回各自生成的图片
 
@@ -266,10 +265,7 @@
     {
       "id": "upscale",
       "template": "anima 放大 mcp.app",
-      "params": {"降噪": 0.3},
-      "bindings": {
-        "输入图片": "step://generate/<输出名>/0"
-      }
+      "params": {"输入图片": "@{step://generate/<输出名>/0}", "降噪": 0.3}
     }
   ]
 }')
@@ -282,7 +278,7 @@
 - [ ] 所有 step 的 `status` 为 `"completed"`
 - [ ] 每个 step 的 `outputs` 与单独调用 `run_template` 的输出格式一致
 - [ ] 顶层不包含重复的 `outputs`
-- [ ] 结果不包含 `final`、`binding_hint`、步骤 `params`、步骤 `prompt_id`
+- [ ] 结果不包含 `final`、步骤 `params`、步骤 `prompt_id`
 
 ### 4.3 两步流水线：生成 + 加密
 
@@ -297,9 +293,7 @@
     {
       "id": "encrypt",
       "template": "图片加密.app",
-      "bindings": {
-        "image": "step://generate/<输出名>/0"
-      }
+      "params": {"image": "@{step://generate/<输出名>/0}"}
     }
   ]
 }')
@@ -315,8 +309,8 @@
 调用: run_templates(pipeline='{
   "steps": [
     {"id": "generate", "template": "anima mcp.app", "params": {"提示词": "..."}},
-    {"id": "encrypt", "template": "图片加密.app", "bindings": {"image": "step://generate/<输出名>/0"}},
-    {"id": "decrypt", "template": "图片解密.app", "bindings": {"image": "step://encrypt/<输出名>/0"}}
+    {"id": "encrypt", "template": "图片加密.app", "params": {"image": "@{step://generate/<输出名>/0}"}},
+    {"id": "decrypt", "template": "图片解密.app", "params": {"image": "@{step://encrypt/<输出名>/0}"}}
   ]
 }')
 ```
@@ -386,7 +380,6 @@
 - [ ] 每个输出值包含 `ref`
 - [ ] 普通执行输出使用 `result://<run-id>/<输出名>/<索引>`
 - [ ] `ref` 中的输出名经过 URL 编码
-- [ ] 不存在 `binding_hint`
 
 ### 5.3 run_templates 输出格式
 
@@ -395,7 +388,7 @@
 - [ ] 每个 step 包含 `id`、`template` 和单模板同结构的完整执行结果
 - [ ] 每一步媒体输出包含 `type`、`url`、`ref`、`markdown`
 - [ ] 每一步文本输出包含 `type`、`value`、`ref`，不包含 `markdown`
-- [ ] 不存在 `final` 或 `binding_hint`
+- [ ] 不存在 `final`
 
 ---
 
@@ -455,14 +448,18 @@
 **验证点：**
 - [ ] 返回 `{"error": "Invalid params JSON: ..."}`
 
-### 7.2 无效 binding JSON
+### 7.2 内联引用指向不存在的 step
 
 ```
-调用: run_template(name="anima mcp.app", params='{}', bindings='无效JSON')
+调用: run_templates(pipeline='{
+  "steps": [
+    {"id": "use", "template": "图片加密.app", "params": {"image": "@{step://nonexistent/<输出名>/0}"}}
+  ]
+}')
 ```
 
 **验证点：**
-- [ ] 返回 `{"error": "Invalid bindings JSON: ..."}`
+- [ ] 该 step 报错，错误信息包含 "unavailable"
 
 ### 7.3 无效 pipeline JSON
 
@@ -478,34 +475,31 @@
 ```
 调用: run_template(
   name="anima 放大 mcp.app",
-  params='{}',
-  bindings='{"输入图片": "result://不存在的id/xxx/0"}'
+  params='{"输入图片": "@{result://不存在的id/xxx/0}"}'
 )
 ```
 
 **验证点：**
-- [ ] 返回错误信息包含 "not found"
+- [ ] 返回错误信息包含 "unavailable"
 
 ### 7.5 result ref 引用不存在的 output
 
 ```
 调用: run_template(
   name="anima 放大 mcp.app",
-  params='{}',
-  bindings='{"输入图片": "result://<有效run-id>/不存在的output/0"}'
+  params='{"输入图片": "@{result://<有效run-id>/不存在的output/0}"}'
 )
 ```
 
 **验证点：**
 - [ ] 返回错误信息包含 "not found"
 
-### 7.6 binding index 越界
+### 7.6 内联引用 index 越界
 
 ```
 调用: run_template(
   name="anima 放大 mcp.app",
-  params='{}',
-  bindings='{"输入图片": "result://<有效run-id>/<有效output>/999"}'
+  params='{"输入图片": "@{result://<有效run-id>/<有效output>/999}"}'
 )
 ```
 
@@ -524,7 +518,7 @@
 - [ ] 返回结果包含 `result://` 输出引用
 - [ ] 返回结果中 `outputs` 无冗余字段
 - [ ] 用输出 `ref` 执行放大模板成功
-- [ ] `run_templates` 一次执行两个不带 `bindings` 的独立任务成功
+- [ ] `run_templates` 一次执行两个互不引用的独立任务成功
 - [ ] `run_templates` 两步流水线成功
 - [ ] 流水线使用 `step://` 引用，每一步都返回完整输出
 
