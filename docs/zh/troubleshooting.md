@@ -93,7 +93,7 @@ COMFYUI_URL=http://<ComfyUI 主机>:<端口>
 
 1. 让 AI 重新调用 `get_template()` 确认目标模板输入。
 2. 确认上一步确实生成了需要的图片、音频或文本。
-3. 让 AI 参考 [工具参考：Bindings 串联](./tools.md#bindings-串联) 重新组织调用。
+3. 让 AI 参考 [工具参考：内联引用](./tools.md#内联引用-ref) 重新组织调用。
 
 ## 生成超时
 

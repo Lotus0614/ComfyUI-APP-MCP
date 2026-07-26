@@ -93,7 +93,7 @@ Check:
 
 1. Ask the AI to call `get_template()` again for the target template.
 2. Confirm the previous step produced the needed image, audio, or text.
-3. Ask the AI to follow [Tool Reference: Bindings](./tools.md#bindings) and retry the call.
+3. Ask the AI to follow [Tool Reference: Inline References](./tools.md#inline-references-ref) and retry the call.
 
 ## Generation Times Out
 
