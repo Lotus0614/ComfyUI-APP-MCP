@@ -16,7 +16,9 @@ function renderDetailRows(entries, formatter, emptyText) {
 }
 
 export async function showTemplateDetail(name) {
-    const template = await apiFetch(`/templates/${name}?include_disabled=1`);
+    const template = await apiFetch(
+        `/templates/${encodeURIComponent(name)}?include_disabled=1`,
+    );
     if (template.error) {
         alert(template.error);
         return;

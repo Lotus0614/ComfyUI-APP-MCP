@@ -8,7 +8,8 @@ An internal MCP server runs on localhost and requests are proxied through.
 
 Environment variables:
   MCP_PORT    — Internal MCP server port (default: 8189, proxied via /app-mcp)
-  MCP_HOST    — Internal MCP server bind host (default: 127.0.0.1)
+  MCP_HOST    — Internal MCP server bind host (default: 0.0.0.0; set to
+                127.0.0.1 to only allow access through the /app-mcp proxy)
   COMFYUI_URL — Optional override for the auto-detected ComfyUI API URL
 """
 
@@ -52,16 +53,37 @@ async def _run_mcp_background():
     app = mcp.streamable_http_app()
     app = MediaProxyMiddleware(PublicURLMiddleware(app))
 
-    config = uvicorn.Config(
+    uv_config = uvicorn.Config(
         app=app,
         host=MCP_HOST,
         port=MCP_PORT,
         log_level="info",
         access_log=False,
     )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(uv_config)
     logger.info(f"MCP Server starting at http://{MCP_HOST}:{MCP_PORT}/mcp")
-    await server.serve()
+    try:
+        await server.serve()
+    except OSError as e:
+        logger.error(
+            "MCP Server failed to bind %s:%s (%s). Is another ComfyUI instance "
+            "already using this port? Set MCP_PORT to a free port. The /app-mcp "
+            "proxy will not work until the MCP server is running.",
+            MCP_HOST, MCP_PORT, e,
+        )
+        raise
+
+
+def _log_mcp_task_result(task: "asyncio.Task") -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("MCP background server exited with an error: %r", exc)
+
+
+# Keep a strong reference so the background task is never garbage collected.
+_mcp_task: "asyncio.Task | None" = None
 
 
 class MCPExtension(ComfyExtension):
@@ -71,8 +93,11 @@ class MCPExtension(ComfyExtension):
 
 async def comfy_entrypoint() -> MCPExtension:
     """ComfyUI V3 entry point — starts the MCP background server."""
+    global _mcp_task
     comfyui_api_url = _configure_comfyui_api_url()
-    asyncio.create_task(_run_mcp_background())
+    if _mcp_task is None or _mcp_task.done():
+        _mcp_task = asyncio.create_task(_run_mcp_background())
+        _mcp_task.add_done_callback(_log_mcp_task_result)
     logger.info(
         "ComfyUI MCP Server plugin loaded (MCP port %s, ComfyUI API %s)",
         MCP_PORT,

@@ -24,9 +24,9 @@ async function syncApiPrompts(templateNames, setActionInfo) {
 
     for (const name of templateNames) {
         try {
-            const workflowContent = await apiFetch(`/workflows/${name}`);
+            const workflowContent = await apiFetch(`/workflows/${encodeURIComponent(name)}`);
             const apiPrompt = await generateApiPrompt(workflowContent);
-            await apiFetch(`/templates/${name}`, {
+            await apiFetch(`/templates/${encodeURIComponent(name)}`, {
                 method: 'PUT',
                 body: JSON.stringify({ api_prompt: apiPrompt }),
             });
@@ -81,14 +81,18 @@ function createTemplateRow(template, reloadTemplates) {
     actions.style.cssText = S.actions;
 
     const detailsButton = buildButton(t('details'), S.smallBtn);
-    detailsButton.addEventListener('click', () => showTemplateDetail(template.name));
+    detailsButton.addEventListener('click', () => {
+        showTemplateDetail(template.name).catch((e) =>
+            alert(t('error', { message: e.message })),
+        );
+    });
 
     const refreshButton = buildButton(t('refresh'), S.smallBtn);
     refreshButton.addEventListener('click', async () => {
         refreshButton.textContent = '...';
         refreshButton.disabled = true;
         try {
-            const workflowContent = await apiFetch(`/workflows/${template.name}`);
+            const workflowContent = await apiFetch(`/workflows/${encodeURIComponent(template.name)}`);
 
             let apiPrompt = null;
             try {
@@ -105,7 +109,7 @@ function createTemplateRow(template, reloadTemplates) {
                 body: JSON.stringify({ workflow: workflowContent }),
             });
 
-            await apiFetch(`/templates/${template.name}`, {
+            await apiFetch(`/templates/${encodeURIComponent(template.name)}`, {
                 method: 'PUT',
                 body: JSON.stringify({
                     workflow: workflowContent,
@@ -132,7 +136,7 @@ function createTemplateRow(template, reloadTemplates) {
         toggleButton.textContent = '...';
         toggleButton.disabled = true;
         try {
-            await apiFetch(`/templates/${template.name}`, {
+            await apiFetch(`/templates/${encodeURIComponent(template.name)}`, {
                 method: 'PUT',
                 body: JSON.stringify({ disabled: !template.disabled }),
             });
@@ -147,8 +151,16 @@ function createTemplateRow(template, reloadTemplates) {
     const deleteButton = buildButton(t('delete'), `${S.smallBtn}${S.dangerBtn}`);
     deleteButton.addEventListener('click', async () => {
         if (!confirm(t('deleteConfirm', { name: template.name }))) return;
-        await apiFetch(`/templates/${template.name}`, { method: 'DELETE' });
-        await reloadTemplates();
+        deleteButton.disabled = true;
+        try {
+            await apiFetch(`/templates/${encodeURIComponent(template.name)}`, {
+                method: 'DELETE',
+            });
+            await reloadTemplates();
+        } catch (e) {
+            alert(t('updateFailed', { message: e.message }));
+            deleteButton.disabled = false;
+        }
     });
 
     actions.append(detailsButton, refreshButton, toggleButton, deleteButton);

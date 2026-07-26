@@ -83,31 +83,42 @@ class MediaProxyMiddleware:
         if query:
             target += f"?{query}"
 
+        # Stream the file through instead of buffering it fully in memory
+        # (output videos/animations can be hundreds of MB).
         try:
             async with httpx.AsyncClient(follow_redirects=True, trust_env=False) as client:
-                upstream = await client.get(
+                async with client.stream(
+                    "GET",
                     target,
                     headers=config.get_comfyui_headers(),
-                    timeout=60,
-                )
+                    timeout=httpx.Timeout(connect=30, read=120, write=60, pool=30),
+                ) as upstream:
+                    headers = []
+                    for key, value in upstream.headers.items():
+                        if key.lower() not in _HOP_BY_HOP:
+                            headers.append((key.lower().encode(), value.encode()))
+
+                    await send({
+                        "type": "http.response.start",
+                        "status": upstream.status_code,
+                        "headers": headers,
+                    })
+                    async for chunk in upstream.aiter_bytes(chunk_size=64 * 1024):
+                        await send({
+                            "type": "http.response.body",
+                            "body": chunk,
+                            "more_body": True,
+                        })
+                    await send({"type": "http.response.body", "body": b""})
         except Exception as e:
-            body = f"MCP media proxy error: {e}".encode()
-            await send({
-                "type": "http.response.start",
-                "status": 502,
-                "headers": [(b"content-type", b"text/plain; charset=utf-8")],
-            })
-            await send({"type": "http.response.body", "body": body})
-            return
-
-        headers = []
-        for key, value in upstream.headers.items():
-            if key.lower() not in _HOP_BY_HOP:
-                headers.append((key.lower().encode(), value.encode()))
-
-        await send({
-            "type": "http.response.start",
-            "status": upstream.status_code,
-            "headers": headers,
-        })
-        await send({"type": "http.response.body", "body": upstream.content})
+            # If the response has not started yet, report the failure cleanly.
+            try:
+                body = f"MCP media proxy error: {e}".encode()
+                await send({
+                    "type": "http.response.start",
+                    "status": 502,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+                })
+                await send({"type": "http.response.body", "body": body})
+            except Exception:
+                pass  # Response already started — nothing more we can do.
