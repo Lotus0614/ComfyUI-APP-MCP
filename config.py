@@ -70,6 +70,20 @@ def _section(name: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _to_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float(value: Any, default: float) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _resolve_path(value: str | os.PathLike[str] | None, default: Path) -> Path:
     if not value:
         return default
@@ -133,7 +147,7 @@ def get_mcp_host() -> str:
 def get_mcp_port() -> int:
     mcp = _section("mcp")
     value = os.environ.get("MCP_PORT") or mcp.get("port") or DEFAULT_MCP_PORT
-    return int(value)
+    return _to_int(value, DEFAULT_MCP_PORT)
 
 
 def get_run_template_timeout() -> float:
@@ -146,7 +160,8 @@ def get_run_template_timeout() -> float:
         or mcp.get("runTemplateTimeout")
         or DEFAULT_RUN_TEMPLATE_TIMEOUT
     )
-    return float(value)
+    timeout = _to_float(value, DEFAULT_RUN_TEMPLATE_TIMEOUT)
+    return timeout if timeout > 0 else DEFAULT_RUN_TEMPLATE_TIMEOUT
 
 
 def set_run_template_timeout(value: float) -> float:
@@ -207,7 +222,7 @@ def get_max_concurrency() -> int:
         or mcp.get("maxConcurrency")
         or DEFAULT_MAX_CONCURRENCY
     )
-    return int(value)
+    return _to_int(value, DEFAULT_MAX_CONCURRENCY)
 
 
 def set_max_concurrency(value: int) -> int:

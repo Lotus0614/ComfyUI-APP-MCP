@@ -1,5 +1,7 @@
 """MCP Server for ComfyUI — tools, resources, and prompts."""
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
@@ -7,7 +9,6 @@ from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-
 from mcp.server.transport_security import TransportSecuritySettings
 
 try:
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 _TRANSPORT_SECURITY = TransportSecuritySettings(
     enable_dns_rebinding_protection=False,
 )
+
+
+def _json(obj) -> str:
+    """Serialize a tool result without ASCII-escaping CJK text."""
+    return json.dumps(obj, ensure_ascii=False)
 
 
 def _format_template_result(result: dict) -> str:
@@ -72,7 +78,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return result
         except Exception as e:
             logger.error(f"[MCP] list_templates error: {e}")
-            return json.dumps({"error": str(e)})
+            return _json({"error": str(e)})
 
     @mcp.tool()
     async def get_template(name: str) -> str:
@@ -86,14 +92,14 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             template = template_manager.get_template(name)
             if not template:
                 logger.warning(f"[MCP] get_template → not found: {name}")
-                return json.dumps({"error": f"Template '{name}' not found"})
+                return _json({"error": f"Template '{name}' not found"})
             if template_manager.is_template_disabled(template):
                 logger.warning(f"[MCP] get_template → disabled: {name}")
-                return json.dumps({"error": f"Template '{name}' is disabled"})
-            return json.dumps(template_manager.build_public_template_schema(template), ensure_ascii=False)
+                return _json({"error": f"Template '{name}' is disabled"})
+            return _json(template_manager.build_public_template_schema(template))
         except Exception as e:
             logger.error(f"[MCP] get_template error: {e}")
-            return json.dumps({"error": str(e)})
+            return _json({"error": str(e)})
 
     @mcp.tool()
     async def read_template_doc(name: str, title: str) -> str:
@@ -112,10 +118,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             result = template_manager.read_template_doc(name, title)
             if result.get("error"):
                 logger.warning(f"[MCP] read_template_doc → {result['error']}")
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
         except Exception as e:
             logger.error(f"[MCP] read_template_doc error: {e}")
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+            return _json({"error": str(e)})
 
     @mcp.tool()
     async def update_template_doc(name: str, title: str, content: str, mode: str = "replace") -> str:
@@ -132,15 +138,15 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         """
         logger.info(f"[MCP] update_template_doc(name={name!r}, title={title!r}, mode={mode!r})")
         if not config.get_update_doc_enabled():
-            return json.dumps({"error": "update_template_doc is disabled. Enable it in MCP Server settings."})
+            return _json({"error": "update_template_doc is disabled. Enable it in MCP Server settings."})
         try:
             result = await template_manager.update_template_doc(name, title, content, mode)
             if result.get("error"):
                 logger.warning(f"[MCP] update_template_doc → {result['error']}")
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
         except Exception as e:
             logger.error(f"[MCP] update_template_doc error: {e}")
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+            return _json({"error": str(e)})
 
     @mcp.tool()
     async def upload_image(source: str) -> str:
@@ -163,10 +169,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             filename, image_bytes = await _read_image(source)
             result = await _upload_to_comfyui(filename, image_bytes)
             logger.info(f"[MCP] upload_image → {result}")
-            return json.dumps(result)
+            return _json(result)
         except Exception as e:
             logger.error(f"[MCP] upload_image error: {e}")
-            return json.dumps({"error": str(e)})
+            return _json({"error": str(e)})
 
     @mcp.tool()
     async def list_models(folder: str = "", keywords: str = "") -> str:
@@ -184,7 +190,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             if not folder:
                 folders = await client.list_model_folders()
                 logger.info(f"[MCP] list_models → {len(folders)} folders")
-                return json.dumps({"folders": folders}, ensure_ascii=False)
+                return _json({"folders": folders})
             models = await client.list_models(folder)
             if keywords:
                 terms = keywords.lower().split()
@@ -192,10 +198,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                 logger.info(f"[MCP] list_models → {len(models)} models in {folder} (filtered by {keywords!r})")
             else:
                 logger.info(f"[MCP] list_models → {len(models)} models in {folder}")
-            return json.dumps({"folder": folder, "models": models}, ensure_ascii=False)
+            return _json({"folder": folder, "models": models})
         except Exception as e:
             logger.error(f"[MCP] list_models error: {e}")
-            return json.dumps({"error": str(e), "folder": folder}, ensure_ascii=False)
+            return _json({"error": str(e), "folder": folder})
 
     async def _read_image(source: str) -> tuple[str, bytes]:
         """Read image from various sources, return (filename, bytes)."""
@@ -263,7 +269,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             parameters = json.loads(params)
         except json.JSONDecodeError as e:
             logger.error(f"[MCP] run_template → invalid JSON: {e}")
-            return json.dumps({"error": f"Invalid params JSON: {e}"})
+            return _json({"error": f"Invalid params JSON: {e}"})
         try:
             result = await template_manager.execute_template(
                 name,
@@ -275,10 +281,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return _format_template_result(result)
         except Exception as e:
             logger.error(f"[MCP] run_template error: {e}")
-            return json.dumps({"error": str(e)})
+            return _json({"error": str(e)})
 
     @mcp.tool()
-    async def run_templates(pipeline: str, timeout_per_step: float = 300) -> str:
+    async def run_templates(pipeline: str, timeout_per_step: float | None = None) -> str:
         """Run multiple tasks sequentially in one call.
 
         Returns every step with the same full execution result shape as run_template,
@@ -309,21 +315,27 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                   ]
                 }
             timeout_per_step: Max seconds to wait for each step.
+                Defaults to the Run Template Timeout setting.
         """
-        logger.info(f"[MCP] run_templates(timeout_per_step={timeout_per_step})")
+        effective_timeout = (
+            timeout_per_step
+            if timeout_per_step and timeout_per_step > 0
+            else config.get_run_template_timeout()
+        )
+        logger.info(f"[MCP] run_templates(timeout_per_step={effective_timeout})")
         try:
             pipeline_data = json.loads(pipeline)
         except json.JSONDecodeError as e:
             logger.error(f"[MCP] run_templates → invalid JSON: {e}")
-            return json.dumps({"error": f"Invalid pipeline JSON: {e}"}, ensure_ascii=False)
+            return _json({"error": f"Invalid pipeline JSON: {e}"})
 
         try:
-            result = await template_manager.run_templates(pipeline_data, timeout_per_step=timeout_per_step)
+            result = await template_manager.run_templates(pipeline_data, timeout_per_step=effective_timeout)
             logger.info(f"[MCP] run_templates → {result.get('status', 'unknown')}")
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
         except Exception as e:
             logger.error(f"[MCP] run_templates error: {e}")
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+            return _json({"error": str(e)})
 
     @mcp.tool()
     async def get_template_result(name: str, run_id: str, wait: bool = False, timeout: float | None = None) -> str:
@@ -340,9 +352,9 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         try:
             template = template_manager.get_template(name)
             if not template:
-                return json.dumps({"error": f"Template '{name}' not found"})
+                return _json({"error": f"Template '{name}' not found"})
             if template_manager.is_template_disabled(template):
-                return json.dumps({"error": f"Template '{name}' is disabled"})
+                return _json({"error": f"Template '{name}' is disabled"})
             outputs = template.get("outputs", {})
             result = await template_manager.get_template_outputs(
                 run_id,
@@ -355,7 +367,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             return _format_template_result(result)
         except Exception as e:
             logger.error(f"[MCP] get_template_result error: {e}")
-            return json.dumps({"error": str(e)})
+            return _json({"error": str(e)})
 
     # ── Resources ───────────────────────────────────────────
 

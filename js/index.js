@@ -32,4 +32,28 @@ app.registerExtension({
             },
         })),
     ],
+    async setup() {
+        // Push stored setting values to the backend once at startup.
+        // onChange alone only fires on user edits, so after a ComfyUI restart
+        // the backend would otherwise fall back to its defaults until the
+        // user touched each setting again.
+        for (const s of RUNTIME_SETTINGS) {
+            try {
+                let value;
+                try {
+                    value = app.ui?.settings?.getSettingValue?.(s.id);
+                } catch {
+                    /* older frontend without getSettingValue */
+                }
+                if (value === undefined || value === null) {
+                    value = s.defaultValue;
+                }
+                const validated = s.validate ? s.validate(value) : value;
+                if (validated === null) continue;
+                await syncRuntimeSetting(s.apiKey, validated);
+            } catch (e) {
+                console.warn(`[MCP] Initial sync failed for ${s.apiKey}:`, e);
+            }
+        }
+    },
 });

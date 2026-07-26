@@ -165,7 +165,7 @@ export async function showCreateTemplateDialog(onDone) {
 
         preview.innerHTML = mutedText(t('analyzingWorkflow'));
         try {
-            const workflowContent = await apiFetch(`/workflows/${name}`);
+            const workflowContent = await apiFetch(`/workflows/${encodeURIComponent(name)}`);
             const info = await apiFetch('/templates/extract', {
                 method: 'POST',
                 body: JSON.stringify({ workflow: workflowContent }),
@@ -204,7 +204,7 @@ export async function showCreateTemplateDialog(onDone) {
         saveBtn.textContent = t('creating');
 
         try {
-            const workflowContent = await apiFetch(`/workflows/${selectedWorkflow}`);
+            const workflowContent = await apiFetch(`/workflows/${encodeURIComponent(selectedWorkflow)}`);
 
             let apiPrompt = null;
             try {

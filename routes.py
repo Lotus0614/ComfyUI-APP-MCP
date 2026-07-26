@@ -1,5 +1,6 @@
 """ComfyUI HTTP routes for MCP template management (frontend API)."""
 
+import asyncio
 import json
 import logging
 import zipfile
@@ -174,10 +175,23 @@ async def get_template(request):
     return web.json_response(template)
 
 
+async def _read_json_body(request: web.Request):
+    """Parse the request body as JSON, returning (data, error_response)."""
+    try:
+        data = await request.json()
+    except Exception as e:
+        return None, web.json_response({"error": f"Invalid JSON body: {e}"}, status=400)
+    if not isinstance(data, dict):
+        return None, web.json_response({"error": "JSON body must be an object"}, status=400)
+    return data, None
+
+
 @PromptServer.instance.routes.post(f"{API_PREFIX}/templates")
 async def create_template(request):
     """Create a template from a workflow."""
-    data = await request.json()
+    data, error = await _read_json_body(request)
+    if error:
+        return error
     name = data.get("name")
     workflow = data.get("workflow")
     api_prompt = data.get("api_prompt")  # Pre-converted API format from frontend
@@ -185,7 +199,10 @@ async def create_template(request):
         return web.json_response({"error": "name and workflow required"}, status=400)
     if not isinstance(workflow, dict) or "nodes" not in workflow:
         return web.json_response({"error": "Invalid workflow content (missing nodes)"}, status=400)
-    template = await template_manager.save_template(name, workflow, api_prompt=api_prompt)
+    try:
+        template = await template_manager.save_template(name, workflow, api_prompt=api_prompt)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
     return web.json_response(template)
 
 
@@ -237,7 +254,9 @@ async def auto_create_templates(request):
 async def update_template(request):
     """Update template metadata (outputs, description, inputs)."""
     name = request.match_info["name"]
-    updates = await request.json()
+    updates, error = await _read_json_body(request)
+    if error:
+        return error
     template = template_manager.update_template(name, updates)
     if not template:
         return web.json_response({"error": "Not found"}, status=404)
@@ -308,10 +327,16 @@ async def delete_template(request):
 async def execute_template(request):
     """Execute a template with parameters."""
     name = request.match_info["name"]
-    data = await request.json()
+    data, error = await _read_json_body(request)
+    if error:
+        return error
     params = data.get("params", {})
+    if not isinstance(params, dict):
+        return web.json_response({"error": "params must be an object"}, status=400)
     try:
-        result = await template_manager.execute_template(name, params)
+        result = await template_manager.execute_template(
+            name, params, timeout=config.get_run_template_timeout()
+        )
         return web.json_response(result)
     except Exception as e:
         logger.error(f"Template execution failed: {e}")
@@ -384,6 +409,10 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
     return headers
 
 
+# Long-lived SSE streams must not hit a read timeout; connect/write stay bounded.
+_PROXY_TIMEOUT = httpx.Timeout(connect=30, read=None, write=60, pool=30)
+
+
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     target = f"http://127.0.0.1:{config.get_mcp_port()}/mcp"
     if request.query_string:
@@ -391,43 +420,54 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     body = await request.read()
     logger.info(f"[MCP Proxy] {request.method} {request.path} -> {target}")
+
+    # Stream the upstream response instead of buffering it. Buffering breaks
+    # Streamable HTTP: SSE streams (long tool calls, GET listen streams) would
+    # sit unread until the whole response completed — or hang forever.
+    client = httpx.AsyncClient(trust_env=False, timeout=_PROXY_TIMEOUT)
     try:
-        async with httpx.AsyncClient(trust_env=False) as client:
-            upstream = await client.request(
-                method=request.method,
-                url=target,
-                headers=_forward_headers(request),
-                content=body or None,
-                timeout=300,
-            )
+        upstream_request = client.build_request(
+            method=request.method,
+            url=target,
+            headers=_forward_headers(request),
+            content=body or None,
+        )
+        upstream = await client.send(upstream_request, stream=True)
     except Exception as e:
+        await client.aclose()
         logger.error(f"[MCP Proxy] upstream error: {e}")
         return web.json_response({"error": f"MCP upstream error: {e}"}, status=502)
 
-    # Build response — stream for SSE, buffered otherwise
-    ct = upstream.headers.get("content-type", "")
-    if "text/event-stream" in ct:
-        resp = web.StreamResponse(
-            status=upstream.status_code,
-            headers={
-                k: v for k, v in upstream.headers.items()
-                if k.lower() not in _HOP_BY_HOP
-            },
-        )
-        await resp.prepare(request)
-        async for chunk in upstream.aiter_bytes():
-            await resp.write(chunk)
-        await resp.write_eof()
-        return resp
+    try:
+        ct = upstream.headers.get("content-type", "")
+        if "text/event-stream" in ct:
+            resp = web.StreamResponse(
+                status=upstream.status_code,
+                headers={
+                    k: v for k, v in upstream.headers.items()
+                    # content-length never applies to a re-chunked stream
+                    if k.lower() not in _HOP_BY_HOP and k.lower() != "content-length"
+                },
+            )
+            await resp.prepare(request)
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    await resp.write(chunk)
+            except (ConnectionResetError, asyncio.CancelledError):
+                # Client went away mid-stream — normal for SSE.
+                return resp
+            await resp.write_eof()
+            return resp
 
-    resp = web.Response(
-        status=upstream.status_code,
-        body=upstream.content,
-    )
-    for k, v in upstream.headers.items():
-        if k.lower() not in _HOP_BY_HOP:
-            resp.headers[k] = v
-    return resp
+        content = await upstream.aread()
+        resp = web.Response(status=upstream.status_code, body=content)
+        for k, v in upstream.headers.items():
+            if k.lower() not in _HOP_BY_HOP:
+                resp.headers[k] = v
+        return resp
+    finally:
+        await upstream.aclose()
+        await client.aclose()
 
 
 @PromptServer.instance.routes.get(MCP_PATH)

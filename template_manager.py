@@ -1,5 +1,7 @@
 """Template manager — wraps ComfyUI workflows as reusable templates with typed inputs/outputs."""
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import json
@@ -7,7 +9,8 @@ import logging
 import contextvars
 import random
 import re
-from urllib.parse import quote, unquote, urlparse
+import time
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 import httpx
 
@@ -28,7 +31,9 @@ _comfyui_public_url: contextvars.ContextVar[str | None] = contextvars.ContextVar
 
 # Module-level cache for public outputs (keyed by prompt_id), used to resolve
 # inline @{result://...} and @{step://...} references.
+# Bounded FIFO: oldest entries are evicted past _MCP_OUTPUTS_CACHE_MAX.
 _mcp_outputs_cache: dict[str, dict] = {}
+_MCP_OUTPUTS_CACHE_MAX = 256
 
 _SEED_INPUT_NAME = "seed"
 _MAX_COMFY_SEED = 2**50 - 1
@@ -38,8 +43,43 @@ _UI_ONLY_TYPES = {
     "MarkdownNote", "Note", "Reroute", "PrimitiveNode",
 }
 
-# Cache for object_info node definitions
+# Cache for object_info node definitions (refreshed after _NODE_DEFS_TTL seconds
+# so newly installed custom nodes are picked up without restarting).
 _node_defs_cache: dict | None = None
+_node_defs_cache_time: float = 0.0
+_NODE_DEFS_TTL = 300.0
+
+# Characters that are unsafe in a template filename (path separators,
+# traversal, Windows-reserved and control characters).
+_UNSAFE_NAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _template_filename(name: str) -> str:
+    """Map a template name to a safe filename, rejecting path traversal.
+
+    Path separators and other unsafe characters are replaced with ``_`` so
+    nested workflow names like ``sub/wf`` map to a flat ``sub_wf.json`` while
+    the stored ``name`` field keeps the original value.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        raise ValueError("Template name must not be empty")
+    safe = _UNSAFE_NAME_CHARS.sub("_", raw)
+    # Reject names that collapse to nothing meaningful or are pure dots
+    if not safe.strip("._ ") or safe in {".", ".."}:
+        raise ValueError(f"Invalid template name: {name!r}")
+    return f"{safe}.json"
+
+
+def _template_path(name: str):
+    return config.get_template_dir() / _template_filename(name)
+
+
+def _cache_outputs(prompt_id: str, outputs: dict) -> None:
+    """Store binding outputs for a prompt with a bounded cache size."""
+    _mcp_outputs_cache[prompt_id] = outputs
+    while len(_mcp_outputs_cache) > _MCP_OUTPUTS_CACHE_MAX:
+        _mcp_outputs_cache.pop(next(iter(_mcp_outputs_cache)))
 
 
 def _build_timeout_result(
@@ -70,12 +110,25 @@ def _comfyui_client() -> ComfyUIClient:
     )
 
 
-async def _get_node_definitions() -> dict:
-    """Fetch and cache node definitions from ComfyUI /object_info."""
-    global _node_defs_cache
-    if _node_defs_cache is not None:
+async def _get_node_definitions(force: bool = False) -> dict:
+    """Fetch and cache node definitions from ComfyUI /object_info (TTL-based)."""
+    global _node_defs_cache, _node_defs_cache_time
+    now = time.monotonic()
+    if (
+        not force
+        and _node_defs_cache is not None
+        and now - _node_defs_cache_time < _NODE_DEFS_TTL
+    ):
         return _node_defs_cache
-    _node_defs_cache = await _comfyui_client().list_nodes()
+    try:
+        _node_defs_cache = await _comfyui_client().list_nodes()
+        _node_defs_cache_time = now
+    except Exception:
+        # Keep serving a stale cache rather than failing outright.
+        if _node_defs_cache is not None:
+            logger.warning("[Template] object_info refresh failed; using cached node defs")
+            return _node_defs_cache
+        raise
     return _node_defs_cache
 
 
@@ -379,7 +432,11 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
             if isinstance(li, list):
                 for item in li:
                     # item = [node_id, widget_name]
-                    node_id = int(item[0]) if isinstance(item, list) else int(item)
+                    try:
+                        node_id = int(item[0]) if isinstance(item, list) else int(item)
+                    except (TypeError, ValueError, IndexError):
+                        logger.warning(f"[Template] Skipping malformed linearData input entry: {item!r}")
+                        continue
                     widget = item[1] if isinstance(item, list) and len(item) > 1 else None
                     linear_inputs.append((node_id, widget))
 
@@ -521,7 +578,6 @@ def _inject_widget_values_into_workflow(
     affected, only the embedded metadata. The input ``workflow`` is never
     mutated (a deep copy is returned).
     """
-    import copy
     wf = copy.deepcopy(workflow)
     node_map, _api_key_map, _inst = _collect_workflow_nodes(wf)
     for param_name, value in params.items():
@@ -622,7 +678,7 @@ def _detect_output_nodes(workflow: dict) -> dict:
         # proxies with no real api_prompt key).
         if class_type in _UI_ONLY_TYPES or class_type in subgraph_uuids:
             continue
-        for out_idx, out in enumerate(node.get("outputs", [])):
+        for out_idx, out in enumerate(node.get("outputs") or []):
             if (node_id, out_idx) not in used_outputs:
                 out_type = out.get("type", "")
                 name = f"{title}_{node_id}_{out.get('name', out_idx)}"
@@ -708,10 +764,17 @@ def list_public_templates() -> list[dict]:
 
 
 def get_template(name: str) -> dict | None:
-    path = config.get_template_dir() / f"{name}.json"
+    try:
+        path = _template_path(name)
+    except ValueError:
+        return None
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"Failed to load template '{name}': {e}")
+        return None
 
 
 def list_template_docs(template: dict) -> list[str]:
@@ -771,7 +834,7 @@ async def update_template_doc(name: str, title: str, content: str, mode: str = "
         template["description"] = updated_content or ""
 
     # Persist template file
-    path = config.get_template_dir() / f"{name}.json"
+    path = _template_path(name)
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # Write back to ComfyUI's original workflow storage
@@ -806,7 +869,16 @@ async def _upload_media_to_input(media_item: dict) -> dict:
 async def _resolve_output_value(outputs: dict, output_name: str, index: int):
     """Resolve one public output reference to a template parameter value."""
     if output_name not in outputs:
-        raise ValueError(f"Output '{output_name}' not found")
+        # Tolerant fallback: if there is exactly one output, use it — refs
+        # rebuilt from raw history may carry class-based names instead of the
+        # template's public aliases.
+        if len(outputs) == 1:
+            output_name = next(iter(outputs))
+        else:
+            available = ", ".join(sorted(outputs)) or "none"
+            raise ValueError(
+                f"Output '{output_name}' not found. Available outputs: {available}"
+            )
 
     output_data = outputs[output_name]
     texts = output_data.get("text", [])
@@ -843,10 +915,17 @@ async def _resolve_inline_ref(ref: str, step_results: dict | None = None):
     prompt_id, output_name, index = _parse_output_ref(ref, "result")
     outputs = _mcp_outputs_cache.get(prompt_id)
     if not isinstance(outputs, dict):
+        # Cache miss (e.g. server restarted): rebuild public outputs from the
+        # ComfyUI history entry for this prompt.
         entry = await _fetch_history_entry(prompt_id)
-        outputs = entry.get("mcp_outputs") if entry else None
+        if entry and entry.get("status", {}).get("completed", False):
+            _extract_outputs(entry, {}, prompt_id)  # repopulates the cache
+            outputs = _mcp_outputs_cache.get(prompt_id)
     if not isinstance(outputs, dict):
-        raise ValueError(f"Result '{prompt_id}' is unavailable for reference")
+        raise ValueError(
+            f"Result '{prompt_id}' is unavailable for reference "
+            "(not found in history or not completed yet)"
+        )
     return await _resolve_output_value(outputs, output_name, index)
 
 
@@ -904,6 +983,8 @@ async def _apply_inline_refs(value, step_results: dict | None = None):
     if isinstance(value, dict):
         return {k: await _apply_inline_refs(v, step_results) for k, v in value.items()}
     return value
+
+
 
 
 async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
@@ -968,6 +1049,7 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
 
 async def save_template(name: str, workflow: dict, outputs: dict | None = None, api_prompt: dict | None = None) -> dict:
     _ensure_dir()
+    path = _template_path(name)  # Validate the name before doing any work
     info = await extract_template_info(workflow)
     template = {
         "name": name,
@@ -979,7 +1061,6 @@ async def save_template(name: str, workflow: dict, outputs: dict | None = None, 
         "inputs": info["inputs"],
         "outputs": outputs or info["outputs"],
     }
-    path = config.get_template_dir() / f"{name}.json"
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
     return template
 
@@ -1002,13 +1083,16 @@ def update_template(name: str, updates: dict) -> dict | None:
         template["inputs"] = updates["inputs"]
     if "disabled" in updates:
         template["disabled"] = bool(updates["disabled"])
-    path = config.get_template_dir() / f"{name}.json"
+    path = _template_path(name)
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
     return template
 
 
 def delete_template(name: str) -> bool:
-    path = config.get_template_dir() / f"{name}.json"
+    try:
+        path = _template_path(name)
+    except ValueError:
+        return False
     if path.exists():
         path.unlink()
         return True
@@ -1097,10 +1181,12 @@ async def _wait_for_result(
 ) -> dict:
     """Poll /history until the prompt completes or times out."""
     interval = 1.0  # poll interval in seconds
-    elapsed = 0.0
     checked_queue = False
     client = _comfyui_client()
-    while elapsed < timeout:
+    start = time.monotonic()
+    deadline = start + timeout
+    while time.monotonic() < deadline:
+        elapsed = time.monotonic() - start
         try:
             history = await client.get_history(prompt_id)
             if prompt_id in history:
@@ -1131,7 +1217,6 @@ async def _wait_for_result(
         except Exception as e:
             logger.warning(f"Poll error: {e}")
         await asyncio.sleep(interval)
-        elapsed += interval
     return _build_timeout_result(
         prompt_id,
         timeout,
@@ -1189,21 +1274,21 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
         public_name = output_meta.get("public_name") or _clean_public_name(name) or "output"
 
         # Build simplified media entries (images, audio, gifs, etc.)
+        base_url = _comfyui_public_url.get() or config.get_comfyui_public_url()
         media_urls = []
         for media_key in ("images", "audio", "gifs"):
-            items = node_output.get(media_key, [])
-            if not items:
-                continue
+            items = node_output.get(media_key) or []
             for item in items:
                 filename = item.get("filename", "")
                 subfolder = item.get("subfolder", "")
                 item_type = item.get("type", "output")
                 media_type = item.get("mediaType", media_key.rstrip("s"))  # "image", "audio", "gif"
-                base_url = _comfyui_public_url.get() or config.get_comfyui_public_url()
-                url = (f"{base_url}/view?"
-                       f"filename={filename}"
-                       f"&subfolder={subfolder}"
-                       f"&type={item_type}")
+                query = urlencode({
+                    "filename": filename,
+                    "subfolder": subfolder,
+                    "type": item_type,
+                })
+                url = f"{base_url}/view?{query}"
                 media_urls.append({
                     "url": url,
                     "type": media_type,
@@ -1266,9 +1351,81 @@ def _extract_outputs(entry: dict, outputs: dict, prompt_id: str) -> dict:
         "prompt_id": prompt_id,
         "outputs": result,
     }
-    entry["mcp_outputs"] = public_outputs
-    _mcp_outputs_cache[prompt_id] = public_outputs
+    _cache_outputs(prompt_id, public_outputs)
     return result_payload
+
+
+def _coerce_param_value(value, input_type: str):
+    """Best-effort coercion of a parameter value to its declared input type.
+
+    AI clients frequently send numbers/booleans as strings; ComfyUI would then
+    fail with an obscure node validation error. Raises ValueError with a clear
+    message when the value cannot be interpreted.
+    """
+    t = str(input_type or "").upper()
+    if t == "INT":
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str) and value.strip():
+            return int(float(value.strip()))
+        raise ValueError(f"expected an integer, got {value!r}")
+    if t == "FLOAT":
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str) and value.strip():
+            return float(value.strip())
+        raise ValueError(f"expected a number, got {value!r}")
+    if t == "BOOLEAN":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        raise ValueError(f"expected a boolean, got {value!r}")
+    return value
+
+
+def _validate_and_coerce_params(inputs: dict, params: dict) -> tuple[dict, str | None]:
+    """Validate parameter names against template inputs and coerce types.
+
+    Returns (coerced_params, error_message). Unknown parameter names produce an
+    error listing the valid ones so AI clients can self-correct.
+    """
+    known = set(inputs) | {_SEED_INPUT_NAME}
+    unknown = [p for p in params if p not in known]
+    if unknown:
+        available = ", ".join(sorted(n for n in inputs if n != _SEED_INPUT_NAME)) or "none"
+        return params, (
+            f"Unknown parameter(s): {', '.join(unknown)}. "
+            f"Valid parameters: {available}. "
+            "Call get_template to see the current input schema."
+        )
+
+    coerced = {}
+    errors = []
+    for name, value in params.items():
+        meta = inputs.get(name)
+        if not meta:
+            coerced[name] = value
+            continue
+        try:
+            coerced[name] = _coerce_param_value(value, meta.get("type", ""))
+        except (ValueError, TypeError) as e:
+            errors.append(f"'{name}': {e}")
+    if errors:
+        return params, "Invalid parameter value(s): " + "; ".join(errors)
+    return coerced, None
 
 
 def _inject_widget_values(api_prompt_data: dict, inputs: dict, params: dict) -> dict:
@@ -1276,7 +1433,6 @@ def _inject_widget_values(api_prompt_data: dict, inputs: dict, params: dict) -> 
 
     The API prompt is already in the correct format - we just need to replace widget values.
     """
-    import copy
     api_prompt = copy.deepcopy(api_prompt_data)
 
     for param_name, value in params.items():
@@ -1341,6 +1497,10 @@ async def execute_template(
             except Exception as e:
                 return {"error": f"Failed to resolve inline reference in '{k}': {e}"}
         params = new_params
+
+    params, param_error = _validate_and_coerce_params(inputs, params)
+    if param_error:
+        return {"error": param_error, "template": name}
 
     # Generate API prompt
     api_prompt_data = template.get("api_prompt")
