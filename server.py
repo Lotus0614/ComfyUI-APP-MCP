@@ -8,8 +8,9 @@ import logging
 from pathlib import Path
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.applications import Starlette
 
 try:
     from .comfyui_client import ComfyUIClient
@@ -42,7 +43,7 @@ def _format_template_result(result: dict) -> str:
     )
 
 
-def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
+def create_mcp_server(client: ComfyUIClient | None = None) -> MCPServer:
     """Create and configure the MCP server instance."""
     if client is None:
         client = ComfyUIClient(
@@ -50,7 +51,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             headers=config.get_comfyui_headers(),
         )
 
-    mcp = FastMCP(
+    mcp = MCPServer(
         name="ComfyUI MCP Server",
         instructions=(
             "Execute ComfyUI templates for image generation, processing, and more. "
@@ -61,8 +62,6 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "When chaining templates, embed a ref inline in a parameter value as `@{<ref>}`. "
             "NEVER use upload_image for template outputs - reference them inline instead."
         ),
-        stateless_http=True,
-        transport_security=_TRANSPORT_SECURITY,
     )
 
     # ── Template Tools ──────────────────────────────────────
@@ -439,6 +438,15 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         )
 
     return mcp
+
+
+def create_mcp_http_app(client: ComfyUIClient | None = None) -> Starlette:
+    """Create the Streamable HTTP app with its transport configuration."""
+    mcp = create_mcp_server(client)
+    return mcp.streamable_http_app(
+        stateless_http=True,
+        transport_security=_TRANSPORT_SECURITY,
+    )
 
 
 def main():

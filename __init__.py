@@ -18,7 +18,7 @@ import logging
 
 from comfy_api.latest import ComfyExtension, io
 
-from .server import create_mcp_server
+from .server import create_mcp_http_app
 from . import routes  # noqa: F401 — register aiohttp routes on import
 from . import config
 from .media_proxy import MediaProxyMiddleware, PublicURLMiddleware
@@ -49,8 +49,7 @@ async def _run_mcp_background():
     """Run the MCP server as a background uvicorn task."""
     import uvicorn
 
-    mcp = create_mcp_server()
-    app = mcp.streamable_http_app()
+    app = create_mcp_http_app()
     app = MediaProxyMiddleware(PublicURLMiddleware(app))
 
     uv_config = uvicorn.Config(

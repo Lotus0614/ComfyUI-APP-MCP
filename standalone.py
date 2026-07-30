@@ -15,16 +15,15 @@ if _pkg_dir not in sys.path:
 try:
     from . import config
     from .media_proxy import MediaProxyMiddleware, PublicURLMiddleware
-    from .server import create_mcp_server
+    from .server import create_mcp_http_app
 except ImportError:
     import config
     from media_proxy import MediaProxyMiddleware, PublicURLMiddleware
-    from server import create_mcp_server
+    from server import create_mcp_http_app
 
 
 def _build_app():
-    mcp = create_mcp_server()
-    return MediaProxyMiddleware(PublicURLMiddleware(mcp.streamable_http_app()))
+    return MediaProxyMiddleware(PublicURLMiddleware(create_mcp_http_app()))
 
 
 def main() -> None:
