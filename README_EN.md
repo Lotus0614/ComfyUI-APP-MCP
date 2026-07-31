@@ -13,22 +13,34 @@ Wrap ComfyUI App Mode workflows as MCP tools, so AI assistants can discover temp
 
 ## Quick Start
 
-1. Install the plugin under ComfyUI `custom_nodes` and install dependencies:
+1. Install the plugin using either method:
 
-   ```bash
-   cd ComfyUI/custom_nodes
-   git clone <this-repo-url> ComfyUI-APP-MCP
-   cd ComfyUI-APP-MCP
-   python -m pip install -r requirements.txt
-   ```
+   - **ComfyUI Manager (recommended)**: open ComfyUI Manager, search for `app-mode-mcp`, and click Install.
+   - **Git**: clone the repository into ComfyUI's `custom_nodes` directory:
 
-2. Start ComfyUI with a version that supports App Mode.
+     ```bash
+     cd ComfyUI/custom_nodes
+     git clone https://github.com/Luo-Lotus/ComfyUI-APP-MCP.git
+     cd ComfyUI-APP-MCP
+     # Use the same Python interpreter that launches ComfyUI; activate its virtual environment first
+     python -m pip install -r requirements.txt
+     ```
+
+     For the Windows portable build, run this from the `ComfyUI_windows_portable` directory to use its bundled Python:
+
+     ```powershell
+     .\python_embeded\python.exe -m pip install -r .\ComfyUI\custom_nodes\ComfyUI-APP-MCP\requirements.txt
+     ```
+
+2. Start or restart ComfyUI with a version that supports App Mode.
 3. Open a workflow and enter **App Builder** from the top-left menu.
 4. Mark AI-editable fields as inputs, mark result nodes as outputs, and give inputs clear parameter names.
 5. Add Markdown Note nodes for template docs:
+
    - `title`: short title shown in the template list
    - `description`: detailed description shown in template details
    - Other headings: extra docs that can be read on demand
+
 6. Go to **Settings → MCP Server → Templates** and click **Create from Workflow**.
 7. Connect your MCP client to `http://127.0.0.1:<comfyui-port>/app-mcp` or `http://127.0.0.1:8189/mcp`.
 8. Ask the AI to call `list_templates()` first, then `get_template()`, `run_template()`, or `run_templates()`.
@@ -105,14 +117,6 @@ See [Tool Reference: Frontend Management](./docs/en/tools.md#comfyui-frontend-ma
 
 ## Most Common Issues
 
-### Template List Is Empty
-
-Make sure the workflow was saved to the ComfyUI server through **Save**, not only exported locally through **Export**.
-
-### Image Input Does Not Work
-
-For a new image provided by the user, call `upload_image()` first and use the returned `name` as the template parameter. Template-generated images can be chained by the AI and do not need to be uploaded manually.
-
 ### Workflow Not Found When Creating a Template
 
 Plugin mode automatically reads ComfyUI's actual startup port, so custom ports require no extra configuration. To override the auto-detected address, set this before startup:
@@ -121,7 +125,15 @@ Plugin mode automatically reads ComfyUI's actual startup port, so custom ports r
 COMFYUI_URL=http://<comfyui-host>:<port>
 ```
 
+### Input Values Filled by the AI Do Not Take Effect
+
+Make sure the parameter names passed by the AI exactly match the template parameters returned by `get_template()`.
+
+Do not directly mark a node's custom UI options as inputs because the AI cannot identify these options. Instead, try marking the data input field above the custom UI as an input; this field usually stores the actual data selected in the custom UI. After confirming its data format, explain the field structure and expected values in the template `description` so the AI knows how to fill it.
+
 ### Images Cannot Be Sent Through AstrBot or Similar Platforms
+
+Check that all inputs and outputs are configured in App Builder. In particular, the outputs must include a Save Image node.
 
 Check that the AI passes the correct argument type to the platform's send tool. A common mistake is passing an image URL into a local-file `path` argument. If the tool distinguishes `url`, `image_url`, `file`, and `path`, use the field required by that tool.
 

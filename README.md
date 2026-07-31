@@ -15,22 +15,34 @@
 
 ## 快速开始
 
-1. 安装插件到 ComfyUI 的 `custom_nodes` 目录，并安装依赖：
+1. 安装插件（二选一）：
 
-   ```bash
-   cd ComfyUI/custom_nodes
-   git clone <this-repo-url> ComfyUI-APP-MCP
-   cd ComfyUI-APP-MCP
-   python -m pip install -r requirements.txt
-   ```
+   - **通过 ComfyUI Manager 安装（推荐）**：打开 ComfyUI Manager，搜索 `app-mode-mcp`，点击安装。
+   - **通过 Git 安装**：把仓库克隆到 ComfyUI 的 `custom_nodes` 目录：
 
-2. 启动 ComfyUI，并确保使用支持 App Mode 的版本。
+     ```bash
+     cd ComfyUI/custom_nodes
+     git clone https://github.com/Luo-Lotus/ComfyUI-APP-MCP.git
+     cd ComfyUI-APP-MCP
+     # 请使用实际启动 ComfyUI 的 Python；虚拟环境需先激活
+     python -m pip install -r requirements.txt
+     ```
+
+     Windows 便携包请在 `ComfyUI_windows_portable` 目录使用包内的 Python 安装依赖：
+
+     ```powershell
+     .\python_embeded\python.exe -m pip install -r .\ComfyUI\custom_nodes\ComfyUI-APP-MCP\requirements.txt
+     ```
+
+2. 启动或重启 ComfyUI，并确保使用支持 App Mode 的版本。
 3. 打开工作流，在左上角菜单进入 **App Builder**。
 4. 标记希望 AI 修改的内容为输入，标记保存图片等节点为输出，并把输入命名成清晰参数名。
 5. 添加 Markdown Note 说明模板：
+
    - `title`：模板短标题，显示在模板列表中
    - `description`：模板详细说明，显示在模板详情中
    - 其他标题：作为可按需读取的模板文档
+
 6. 在 **Settings → MCP Server → Templates** 点击 **Create from Workflow** 创建模板。
 7. 在 MCP 客户端连接 `http://127.0.0.1:<ComfyUI 端口>/app-mcp` 或 `http://127.0.0.1:8189/mcp`。
 8. 让 AI 先调用 `list_templates()`，再调用 `get_template()`、`run_template()` 或 `run_templates()`。
@@ -41,10 +53,10 @@
 
 ## 连接地址
 
-| 入口             | 地址                            | 说明                                |
-| ---------------- | ------------------------------- | ----------------------------------- |
+| 入口             | 地址                                      | 说明                                |
+| ---------------- | ----------------------------------------- | ----------------------------------- |
 | ComfyUI 代理入口 | `http://127.0.0.1:<ComfyUI 端口>/app-mcp` | 通过 ComfyUI 端口访问 MCP           |
-| MCP 直接入口     | `http://127.0.0.1:8189/mcp`     | 随 ComfyUI 一起启动，和上面用法一致 |
+| MCP 直接入口     | `http://127.0.0.1:8189/mcp`               | 随 ComfyUI 一起启动，和上面用法一致 |
 
 MCP 客户端配置示例：
 
@@ -70,16 +82,16 @@ http://127.0.0.1:8189/mcp
 
 ## 常用工具
 
-| 工具                             | 用途                         | 什么时候用                           |
-| -------------------------------- | ---------------------------- | ------------------------------------ |
-| `list_templates()`               | 查看可用模板                 | 开始任务前先查有哪些能力             |
-| `get_template(name)`             | 读取模板参数、输出、文档入口 | 执行前确认参数怎么填                 |
-| `read_template_doc(name, title)` | 读取模板的扩展说明           | `description` 提到更多文档时使用     |
-| `run_template()`                 | 执行单个模板                 | 文生图、图生图、放大、加密等单步任务 |
+| 工具                             | 用途                             | 什么时候用                           |
+| -------------------------------- | -------------------------------- | ------------------------------------ |
+| `list_templates()`               | 查看可用模板                     | 开始任务前先查有哪些能力             |
+| `get_template(name)`             | 读取模板参数、输出、文档入口     | 执行前确认参数怎么填                 |
+| `read_template_doc(name, title)` | 读取模板的扩展说明               | `description` 提到更多文档时使用     |
+| `run_template()`                 | 执行单个模板                     | 文生图、图生图、放大、加密等单步任务 |
 | `run_templates()`                | 一次运行多个任务并返回每一步结果 | 批量生成，或生成 → 放大等多步处理    |
-| `upload_image(source)`           | 上传用户提供的新图片         | 图片来自用户本地、URL 或 base64 时   |
-| `list_models(folder, keywords)`  | 查询模型目录                 | 需要选择 checkpoint、LoRA、VAE 时    |
-| `get_template_result()`          | 查询或继续等待结果           | `run_template` 超时或异步等待时      |
+| `upload_image(source)`           | 上传用户提供的新图片             | 图片来自用户本地、URL 或 base64 时   |
+| `list_models(folder, keywords)`  | 查询模型目录                     | 需要选择 checkpoint、LoRA、VAE 时    |
+| `get_template_result()`          | 查询或继续等待结果               | `run_template` 超时或异步等待时      |
 
 完整参数、返回结构和示例见 [工具参考](./docs/zh/tools.md)。
 
@@ -107,14 +119,6 @@ http://127.0.0.1:8189/mcp
 
 ## 最常见问题
 
-### 模板列表为空
-
-确保工作流已通过 ComfyUI 的 **Save** 保存到服务器，而不是只用 **Export** 导出到本地。
-
-### 图片输入不生效
-
-用户提供的新图片先用 `upload_image()` 上传，再把返回的 `name` 填入模板参数。模板生成的图片交给 AI 串联即可，不需要手动上传。
-
 ### 创建模板时找不到工作流
 
 插件模式会自动读取 ComfyUI 的实际启动端口，使用自定义端口时无需额外配置。如果需要覆盖自动检测的地址，可在启动前设置：
@@ -123,7 +127,15 @@ http://127.0.0.1:8189/mcp
 COMFYUI_URL=http://<ComfyUI 主机>:<端口>
 ```
 
+### AI 填入的输入字段不生效
+
+确保 AI 传入的参数名与 `get_template()` 返回的模板参数完全一致。
+
+不要把节点的自定义 UI 选项直接标记为输入，AI 无法识别这类选项。可以尝试把自定义 UI 上方的数据内容输入框标记为输入；该输入框通常保存了自定义 UI 中选择的实际数据。确认其中的数据格式后，在模板的 `description` 中说明字段结构和填写方法，让 AI 按要求传入。
+
 ### 接入 AstrBot 等平台后图片发不出来
+
+检查 App Builder 中的输入、输出节点是否配置完整，尤其要确保输出节点中包含保存图片节点。
 
 确认 AI 调用平台发送工具时参数类型正确。常见错误是把图片 URL 填到 `path` 这类本地文件路径参数里；如果平台工具区分 `url`、`image_url`、`file`、`path`，应按工具要求传对应字段。
 
