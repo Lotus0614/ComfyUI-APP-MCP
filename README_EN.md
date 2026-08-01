@@ -15,7 +15,7 @@ Wrap ComfyUI App Mode workflows as MCP tools, so AI assistants can discover temp
 
 1. Install the plugin using either method:
 
-   - **ComfyUI Manager (recommended)**: open ComfyUI Manager, search for `app-mode-mcp`, and click Install.
+   - **ComfyUI Manager (recommended)**: open ComfyUI Manager, search for `app mode mcp`, and click Install.
    - **Git**: clone the repository into ComfyUI's `custom_nodes` directory:
 
      ```bash

@@ -16,32 +16,30 @@
 ## 快速开始
 
 1. 安装插件（二选一）：
+    - **通过 ComfyUI Manager 安装（推荐）**：打开 ComfyUI Manager，搜索 `app mode mcp`，点击安装。
+    - **通过 Git 安装**：把仓库克隆到 ComfyUI 的 `custom_nodes` 目录：
 
-   - **通过 ComfyUI Manager 安装（推荐）**：打开 ComfyUI Manager，搜索 `app-mode-mcp`，点击安装。
-   - **通过 Git 安装**：把仓库克隆到 ComfyUI 的 `custom_nodes` 目录：
+        ```bash
+        cd ComfyUI/custom_nodes
+        git clone https://github.com/Luo-Lotus/ComfyUI-APP-MCP.git
+        cd ComfyUI-APP-MCP
+        # 请使用实际启动 ComfyUI 的 Python；虚拟环境需先激活
+        python -m pip install -r requirements.txt
+        ```
 
-     ```bash
-     cd ComfyUI/custom_nodes
-     git clone https://github.com/Luo-Lotus/ComfyUI-APP-MCP.git
-     cd ComfyUI-APP-MCP
-     # 请使用实际启动 ComfyUI 的 Python；虚拟环境需先激活
-     python -m pip install -r requirements.txt
-     ```
+        Windows 便携包请在 `ComfyUI_windows_portable` 目录使用包内的 Python 安装依赖：
 
-     Windows 便携包请在 `ComfyUI_windows_portable` 目录使用包内的 Python 安装依赖：
-
-     ```powershell
-     .\python_embeded\python.exe -m pip install -r .\ComfyUI\custom_nodes\ComfyUI-APP-MCP\requirements.txt
-     ```
+        ```powershell
+        .\python_embeded\python.exe -m pip install -r .\ComfyUI\custom_nodes\ComfyUI-APP-MCP\requirements.txt
+        ```
 
 2. 启动或重启 ComfyUI，并确保使用支持 App Mode 的版本。
 3. 打开工作流，在左上角菜单进入 **App Builder**。
 4. 标记希望 AI 修改的内容为输入，标记保存图片等节点为输出，并把输入命名成清晰参数名。
 5. 添加 Markdown Note 说明模板：
-
-   - `title`：模板短标题，显示在模板列表中
-   - `description`：模板详细说明，显示在模板详情中
-   - 其他标题：作为可按需读取的模板文档
+    - `title`：模板短标题，显示在模板列表中
+    - `description`：模板详细说明，显示在模板详情中
+    - 其他标题：作为可按需读取的模板文档
 
 6. 在 **Settings → MCP Server → Templates** 点击 **Create from Workflow** 创建模板。
 7. 在 MCP 客户端连接 `http://127.0.0.1:<ComfyUI 端口>/app-mcp` 或 `http://127.0.0.1:8189/mcp`。
@@ -62,11 +60,11 @@ MCP 客户端配置示例：
 
 ```json
 {
-  "mcpServers": {
-    "comfyui": {
-      "url": "http://127.0.0.1:<ComfyUI 端口>/app-mcp"
+    "mcpServers": {
+        "comfyui": {
+            "url": "http://127.0.0.1:<ComfyUI 端口>/app-mcp"
+        }
     }
-  }
 }
 ```
 
