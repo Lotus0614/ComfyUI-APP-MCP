@@ -66,6 +66,15 @@ const I18N = {
         runTemplateTimeoutSetting: 'Run Template Timeout',
         runTemplateTimeoutTooltip:
             'Default wait timeout in seconds when wait=true (applies to run_template and get_template_result)',
+        templateTokenEnabledSetting: 'Require Template Tokens',
+        templateTokenEnabledTooltip:
+            'Require a token from get_template before run_template or each run_templates step',
+        templateTokenMaxUsesSetting: 'Template Token Max Uses',
+        templateTokenMaxUsesTooltip:
+            'A token expires after this many successfully queued template executions',
+        templateTokenTtlHoursSetting: 'Template Token Lifetime (Hours)',
+        templateTokenTtlHoursTooltip:
+            'A token expires after this many hours; the usage or time limit, whichever comes first, applies',
         updateDocEnabledSetting: 'Enable Update Template Doc',
         updateDocEnabledTooltip:
             'Allow the update_template_doc MCP tool to modify template documentation',
@@ -136,6 +145,15 @@ const I18N = {
         runTemplateTimeoutSetting: '模板运行超时',
         runTemplateTimeoutTooltip:
             'wait=true 时的默认等待超时秒数（适用于 run_template 和 get_template_result）',
+        templateTokenEnabledSetting: '要求模板令牌',
+        templateTokenEnabledTooltip:
+            '要求 run_template 或 run_templates 的每个步骤使用 get_template 返回的令牌',
+        templateTokenMaxUsesSetting: '模板令牌最大使用次数',
+        templateTokenMaxUsesTooltip:
+            '令牌成功提交模板任务达到该次数后失效',
+        templateTokenTtlHoursSetting: '模板令牌有效时间（小时）',
+        templateTokenTtlHoursTooltip:
+            '令牌达到使用次数或有效时间中的任一限制即失效',
         updateDocEnabledSetting: '启用更新模板文档',
         updateDocEnabledTooltip:
             '允许 update_template_doc MCP 工具修改模板文档',

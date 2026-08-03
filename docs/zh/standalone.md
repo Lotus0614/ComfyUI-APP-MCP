@@ -32,6 +32,9 @@ python main.py --listen
 | `MCP_HOST` | `0.0.0.0` | MCP 服务监听地址 |
 | `MCP_PORT` | `8189` | MCP 服务端口 |
 | `MCP_MEDIA_PROXY` | `true` | 媒体链接是否通过 MCP `/view` 代理 |
+| `MCP_TEMPLATE_TOKEN_ENABLED` | `false` | 是否要求模板执行令牌 |
+| `MCP_TEMPLATE_TOKEN_MAX_USES` | `50` | 每个令牌允许成功入队的最大次数 |
+| `MCP_TEMPLATE_TOKEN_TTL_HOURS` | `12` | 每个令牌的有效小时数 |
 
 ## 独立配置文件
 
@@ -46,7 +49,10 @@ python main.py --listen
   "mcp": {
     "host": "0.0.0.0",
     "port": 8189,
-    "mediaProxy": true
+    "mediaProxy": true,
+    "templateTokenEnabled": false,
+    "templateTokenMaxUses": 50,
+    "templateTokenTtlHours": 12
   },
   "templates": {
     "dir": "./templates"
@@ -58,6 +64,8 @@ python main.py --listen
 
 - `comfyui.apiUrl`：MCP 访问 ComfyUI API 的地址。MCP 和 ComfyUI 不在同一台机器时不要写 `127.0.0.1`。
 - `mcp.mediaProxy`：为 `true` 时，结果中的媒体链接指向 MCP `/view`，由 MCP 转发到 ComfyUI `/view`。
+- `mcp.templateTokenEnabled`：为 `true` 时，执行前必须先通过 `get_template()` 获取令牌。
+- `mcp.templateTokenMaxUses`、`mcp.templateTokenTtlHours`：达到成功入队次数或有效时间中的任一限制后，令牌失效。
 - `templates.dir`：MCP 本机模板目录。独立模式不读取 ComfyUI 机器上的模板目录。
 
 通常建议保持 `mcp.mediaProxy=true`。只有关闭媒体代理，或希望媒体链接返回自定义 ComfyUI 公网地址时，才配置：

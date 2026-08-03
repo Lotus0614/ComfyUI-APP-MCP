@@ -14,6 +14,9 @@ DEFAULT_MCP_HOST = "0.0.0.0"
 DEFAULT_MCP_PORT = 8189
 DEFAULT_RUN_TEMPLATE_TIMEOUT = 120
 DEFAULT_EMBED_WORKFLOW_METADATA = True
+DEFAULT_TEMPLATE_TOKEN_ENABLED = False
+DEFAULT_TEMPLATE_TOKEN_MAX_USES = 50
+DEFAULT_TEMPLATE_TOKEN_TTL_HOURS = 12.0
 # Max tasks allowed in the ComfyUI queue (running + pending) before run_template
 # is rejected. <= 0 (including the default -1) means unlimited.
 DEFAULT_MAX_CONCURRENCY = -1
@@ -26,6 +29,9 @@ _runtime_update_doc_enabled: bool | None = None
 _runtime_max_concurrency: int | None = None
 _runtime_embed_workflow_metadata: bool | None = None
 _runtime_comfyui_api_url: str | None = None
+_runtime_template_token_enabled: bool | None = None
+_runtime_template_token_max_uses: int | None = None
+_runtime_template_token_ttl_hours: float | None = None
 
 
 def configure(config_path: str | os.PathLike[str] | None = None) -> None:
@@ -82,6 +88,14 @@ def _to_float(value: Any, default: float) -> float:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _to_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _resolve_path(value: str | os.PathLike[str] | None, default: Path) -> Path:
@@ -230,3 +244,56 @@ def set_max_concurrency(value: int) -> int:
     global _runtime_max_concurrency
     _runtime_max_concurrency = int(value)
     return _runtime_max_concurrency
+
+
+def get_template_token_enabled() -> bool:
+    """Whether MCP template execution requires a token from get_template."""
+    if _runtime_template_token_enabled is not None:
+        return _runtime_template_token_enabled
+    value = os.environ.get("MCP_TEMPLATE_TOKEN_ENABLED")
+    if value is None:
+        value = _section("mcp").get("templateTokenEnabled")
+    return _to_bool(value, DEFAULT_TEMPLATE_TOKEN_ENABLED)
+
+
+def set_template_token_enabled(value: bool) -> bool:
+    """Override template token protection at runtime."""
+    global _runtime_template_token_enabled
+    _runtime_template_token_enabled = bool(value)
+    return _runtime_template_token_enabled
+
+
+def get_template_token_max_uses() -> int:
+    """Maximum successful queued executions allowed for one template token."""
+    if _runtime_template_token_max_uses is not None:
+        return _runtime_template_token_max_uses
+    value = os.environ.get("MCP_TEMPLATE_TOKEN_MAX_USES")
+    if value is None:
+        value = _section("mcp").get("templateTokenMaxUses")
+    max_uses = _to_int(value, DEFAULT_TEMPLATE_TOKEN_MAX_USES)
+    return max_uses if max_uses > 0 else DEFAULT_TEMPLATE_TOKEN_MAX_USES
+
+
+def set_template_token_max_uses(value: int) -> int:
+    """Override the per-token execution limit at runtime."""
+    global _runtime_template_token_max_uses
+    _runtime_template_token_max_uses = int(value)
+    return _runtime_template_token_max_uses
+
+
+def get_template_token_ttl_hours() -> float:
+    """Maximum token lifetime in hours."""
+    if _runtime_template_token_ttl_hours is not None:
+        return _runtime_template_token_ttl_hours
+    value = os.environ.get("MCP_TEMPLATE_TOKEN_TTL_HOURS")
+    if value is None:
+        value = _section("mcp").get("templateTokenTtlHours")
+    ttl_hours = _to_float(value, DEFAULT_TEMPLATE_TOKEN_TTL_HOURS)
+    return ttl_hours if ttl_hours > 0 else DEFAULT_TEMPLATE_TOKEN_TTL_HOURS
+
+
+def set_template_token_ttl_hours(value: float) -> float:
+    """Override the template token lifetime at runtime."""
+    global _runtime_template_token_ttl_hours
+    _runtime_template_token_ttl_hours = float(value)
+    return _runtime_template_token_ttl_hours

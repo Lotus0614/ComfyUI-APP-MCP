@@ -98,6 +98,7 @@ See [Tool Reference](./docs/en/tools.md) for full parameters, return formats, an
 In **Settings → MCP Server**, you can:
 
 - Configure the default `run_template(wait=true)` timeout
+- Configure template execution tokens, maximum uses, and token lifetime
 - Create, refresh, enable, disable, and delete templates
 - Scan workflows and create missing templates
 - Batch refresh existing templates

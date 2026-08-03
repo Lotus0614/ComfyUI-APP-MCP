@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
+import hashlib
 import json
 import logging
-import contextvars
 import random
 import re
 import time
@@ -19,9 +20,11 @@ logger = logging.getLogger(__name__)
 try:
     from . import config
     from .comfyui_client import ComfyUIClient
+    from .template_tokens import template_token_store
 except ImportError:
     import config
     from comfyui_client import ComfyUIClient
+    from template_tokens import template_token_store
 
 # Set by middleware from MCP request query param or comfyui_url header.
 # Used for media links returned to remote MCP clients.
@@ -209,6 +212,34 @@ def build_public_template_schema(template: dict) -> dict:
     }
 
 
+def build_template_schema_revision(template: dict) -> str:
+    """Return a stable digest for the AI-facing template schema and guidance."""
+    payload = json.dumps(
+        build_public_template_schema(template),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def build_template_token_fields(template: dict) -> dict:
+    """Issue token metadata for get_template when token protection is enabled."""
+    if not config.get_template_token_enabled():
+        return {"template_token_required": False}
+    max_uses = config.get_template_token_max_uses()
+    ttl_seconds = config.get_template_token_ttl_hours() * 3600
+    return {
+        "template_token_required": True,
+        **template_token_store.issue(
+            template["name"],
+            build_template_schema_revision(template),
+            max_uses=max_uses,
+            ttl_seconds=ttl_seconds,
+        ),
+    }
+
+
 def build_public_execution_result(result: dict) -> dict:
     """Return the public result shape shared by template execution tools."""
     payload = {
@@ -224,6 +255,14 @@ def build_public_execution_result(result: dict) -> dict:
         payload["error"] = result["error"]
     if result.get("continue_hint"):
         payload["continue_hint"] = result["continue_hint"]
+    for field in (
+        "error_code",
+        "recovery",
+        "template_token_remaining_uses",
+        "template_token_expires_at",
+    ):
+        if field in result:
+            payload[field] = result[field]
 
     return payload
 
@@ -1004,6 +1043,7 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
         step_id = str(raw_step.get("id", "")).strip()
         template_name = str(raw_step.get("template", "")).strip()
         params = raw_step.get("params", {})
+        template_token = raw_step.get("template_token")
 
         if not step_id:
             return {"error": "Each pipeline step requires a non-empty id", "steps": completed_steps}
@@ -1022,6 +1062,8 @@ async def run_templates(pipeline: dict, timeout_per_step: float = 300) -> dict:
             wait=True,
             timeout=timeout_per_step,
             step_results=step_results,
+            template_token=template_token,
+            enforce_template_token=True,
         )
         step_record = {
             "id": step_id,
@@ -1457,6 +1499,8 @@ async def execute_template(
     wait: bool = True,
     timeout: float = 300,
     step_results: dict | None = None,
+    template_token: str | None = None,
+    enforce_template_token: bool = False,
 ) -> dict:
     """Execute a template with given parameters.
 
@@ -1465,6 +1509,8 @@ async def execute_template(
         params: Parameter values to apply.
         wait: If True, poll for results and return them directly.
         timeout: Max seconds to wait for completion (only when wait=True).
+        template_token: Token returned by get_template when protection is enabled.
+        enforce_template_token: Apply MCP template token policy to this execution.
     """
     logger.info(f"[Template] execute_template: {name}, params={params}, wait={wait}")
     template = get_template(name)
@@ -1474,6 +1520,21 @@ async def execute_template(
     if is_template_disabled(template):
         logger.warning(f"[Template] disabled: {name}")
         return {"error": f"Template '{name}' is disabled"}
+
+    token_required = enforce_template_token and config.get_template_token_enabled()
+    token_max_uses = config.get_template_token_max_uses()
+    token_ttl_seconds = config.get_template_token_ttl_hours() * 3600
+    schema_revision = build_template_schema_revision(template) if token_required else ""
+    if token_required:
+        token_error = template_token_store.validate(
+            template_token,
+            name,
+            schema_revision,
+            max_uses=token_max_uses,
+            ttl_seconds=token_ttl_seconds,
+        )
+        if token_error:
+            return token_error
 
     inputs = template.get("inputs", {})
     outputs = template.get("outputs", {})
@@ -1524,20 +1585,41 @@ async def execute_template(
     capacity_error = await _enforce_queue_capacity(client)
     if capacity_error:
         return capacity_error
+
+    token_reservation = None
+    if token_required:
+        token_reservation, token_error = template_token_store.reserve(
+            template_token,
+            name,
+            schema_revision,
+            max_uses=token_max_uses,
+            ttl_seconds=token_ttl_seconds,
+        )
+        if token_error:
+            return token_error
     try:
         result = await client.queue_prompt(api_prompt, workflow=ui_workflow)
     except httpx.HTTPStatusError as e:
+        template_token_store.release(template_token, token_reservation)
         try:
             error_body = e.response.json()
         except Exception:
             error_body = e.response.text
         logger.error(f"[Template] ComfyUI rejected prompt ({e.response.status_code}): {error_body}")
         return {"error": f"ComfyUI error ({e.response.status_code})", "details": error_body}
+    except Exception:
+        template_token_store.release(template_token, token_reservation)
+        raise
 
     prompt_id = result.get("prompt_id")
     if not prompt_id:
+        template_token_store.release(template_token, token_reservation)
         logger.error(f"[Template] Failed to queue prompt: {result}")
         return {"error": "Failed to queue prompt", "details": result}
+
+    token_result = {}
+    if token_required and template_token and token_reservation:
+        token_result = template_token_store.commit(template_token, token_reservation)
 
     logger.info(f"[Template] Prompt queued: {prompt_id}")
 
@@ -1547,6 +1629,7 @@ async def execute_template(
             "status": "queued",
             "template": name,
             "params": params,
+            **token_result,
         }
 
     # Poll for completion
@@ -1556,6 +1639,7 @@ async def execute_template(
         timeout,
         template_name=name,
     )
+    result.update(token_result)
     logger.info(f"[Template] Execution completed: {result.get('status', 'unknown')}")
     return result
 

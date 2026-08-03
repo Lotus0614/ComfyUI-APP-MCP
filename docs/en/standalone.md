@@ -32,6 +32,9 @@ Use the standalone configuration below only when MCP and ComfyUI need to run as 
 | `MCP_HOST` | `0.0.0.0` | MCP listen host |
 | `MCP_PORT` | `8189` | MCP listen port |
 | `MCP_MEDIA_PROXY` | `true` | Whether media links go through MCP `/view` proxy |
+| `MCP_TEMPLATE_TOKEN_ENABLED` | `false` | Whether template execution requires a token |
+| `MCP_TEMPLATE_TOKEN_MAX_USES` | `50` | Maximum successfully queued executions per token |
+| `MCP_TEMPLATE_TOKEN_TTL_HOURS` | `12` | Token lifetime in hours |
 
 ## Standalone Config
 
@@ -46,7 +49,10 @@ Create `mcp.config.json`:
   "mcp": {
     "host": "0.0.0.0",
     "port": 8189,
-    "mediaProxy": true
+    "mediaProxy": true,
+    "templateTokenEnabled": false,
+    "templateTokenMaxUses": 50,
+    "templateTokenTtlHours": 12
   },
   "templates": {
     "dir": "./templates"
@@ -58,6 +64,8 @@ Fields:
 
 - `comfyui.apiUrl`: URL used by MCP to access the ComfyUI API. Do not use `127.0.0.1` when MCP and ComfyUI run on different machines.
 - `mcp.mediaProxy`: when `true`, media URLs point to MCP `/view`, which forwards to ComfyUI `/view`.
+- `mcp.templateTokenEnabled`: when `true`, execution must use a token returned by `get_template()`.
+- `mcp.templateTokenMaxUses`, `mcp.templateTokenTtlHours`: a token expires when either its queued-use count or lifetime is reached.
 - `templates.dir`: local template directory on the MCP machine. Standalone mode does not read templates from the ComfyUI machine.
 
 Usually keep `mcp.mediaProxy=true`. Configure `publicUrl` only when disabling media proxy or when media URLs should point to a custom public ComfyUI proxy:

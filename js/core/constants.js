@@ -17,6 +17,40 @@ export const RUNTIME_SETTINGS = [
         },
     },
     {
+        id: 'MCPServer.execution.templateTokenEnabled',
+        i18nName: 'templateTokenEnabledSetting',
+        i18nTooltip: 'templateTokenEnabledTooltip',
+        type: 'boolean',
+        defaultValue: false,
+        apiKey: 'template_token_enabled',
+    },
+    {
+        id: 'MCPServer.execution.templateTokenMaxUses',
+        i18nName: 'templateTokenMaxUsesSetting',
+        i18nTooltip: 'templateTokenMaxUsesTooltip',
+        type: 'number',
+        defaultValue: 50,
+        attrs: { min: 1, step: 1, showButtons: true },
+        apiKey: 'template_token_max_uses',
+        validate: (v) => {
+            const n = Math.floor(Number(v));
+            return Number.isFinite(n) && n > 0 ? n : null;
+        },
+    },
+    {
+        id: 'MCPServer.execution.templateTokenTtlHours',
+        i18nName: 'templateTokenTtlHoursSetting',
+        i18nTooltip: 'templateTokenTtlHoursTooltip',
+        type: 'number',
+        defaultValue: 12,
+        attrs: { min: 0.1, step: 0.5, showButtons: true },
+        apiKey: 'template_token_ttl_hours',
+        validate: (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        },
+    },
+    {
         id: 'MCPServer.execution.updateDocEnabled',
         i18nName: 'updateDocEnabledSetting',
         i18nTooltip: 'updateDocEnabledTooltip',

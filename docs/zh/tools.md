@@ -52,6 +52,9 @@
 - `inputs`：AI 可填写的公共参数，只包含类型、默认值和可用约束
 - `outputs`：稳定的业务输出名称和类型，不暴露 ComfyUI 节点 ID
 - `docs`：可通过 `read_template_doc()` 读取的文档标题
+- `template_token_required`：当前是否要求执行令牌
+- `template_token`：启用令牌保护时签发的执行令牌
+- `template_token_expires_at`、`template_token_max_uses`：令牌失效时间和最大使用次数
 
 说明：
 
@@ -70,7 +73,7 @@
 
 建议把详细提示词规则、示例、注意事项放到 Markdown Note 中，通过 `description` 提醒 AI 在需要时读取。
 
-## `run_template(name, params, wait=true)`
+## `run_template(name, params, wait=true, template_token=null)`
 
 执行单个模板。
 
@@ -79,6 +82,11 @@
 - `name`：模板名称
 - `params`：JSON 字符串，填写模板输入参数，例如 `'{"prompt": "a cat"}'`。任意字符串值都可用 `@{<ref>}` 内联嵌入引用（见 [内联引用](#内联引用-ref)）。
 - `wait`：是否等待执行完成，默认 `true`
+- `template_token`：启用令牌保护时必填，使用 `get_template()` 返回的同名字段
+
+令牌达到最大成功入队次数或有效时间中的任一限制后失效。失效时重新调用 `get_template()` 获取当前模板信息和新令牌；参数错误、队列已满或提交失败不会消耗次数。
+
+该令牌用于避免 Agent 在上下文压缩后复用旧模板信息，不是身份认证或访问控制机制。
 
 `wait=true` 时，默认等待超时由 **Settings → MCP Server → Execution → Run Template Timeout** 控制，默认 `120` 秒。
 
@@ -159,11 +167,13 @@ result2 = run_template(
     {
       "id": "cat",
       "template": "txt2img",
+      "template_token": "<get_template 返回的令牌>",
       "params": {"prompt": "a cat"}
     },
     {
       "id": "dog",
       "template": "txt2img",
+      "template_token": "<get_template 返回的令牌>",
       "params": {"prompt": "a dog"}
     }
   ]
@@ -178,6 +188,7 @@ result2 = run_template(
     {
       "id": "generate",
       "template": "txt2img",
+      "template_token": "<txt2img 令牌>",
       "params": {
         "prompt": "a cat"
       }
@@ -185,6 +196,7 @@ result2 = run_template(
     {
       "id": "upscale",
       "template": "upscale",
+      "template_token": "<upscale 令牌>",
       "params": {
         "image": "@{step://generate/%E8%BE%93%E5%87%BA%E5%9B%BE%E7%89%87/0}",
         "scale": 2
@@ -272,6 +284,8 @@ result2 = run_template(
 在 **Settings → MCP Server** 中：
 
 - **Execution → Run Template Timeout**：设置 `run_template(wait=true)` 默认等待超时
+- **Execution → Require Template Tokens**：要求执行前先调用 `get_template()` 获取令牌
+- **Execution → Template Token Max Uses / Lifetime**：设置令牌成功入队次数和有效小时数，任一先达到即失效
 - **Templates**：查看、刷新、启用、禁用、删除模板
 - **Auto Extract Templates**：扫描工作流，为包含 `title` Markdown Note 且尚未存在模板的工作流创建模板
 - **Batch Refresh Templates**：从同名工作流重新提取输入、输出、标题和描述

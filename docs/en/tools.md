@@ -52,6 +52,9 @@ Returned fields:
 - `inputs`: public parameters with type, default value, and constraints
 - `outputs`: stable output names and types without ComfyUI node IDs
 - `docs`: doc titles readable through `read_template_doc()`
+- `template_token_required`: whether execution currently requires a token
+- `template_token`: execution token issued when token protection is enabled
+- `template_token_expires_at`, `template_token_max_uses`: token expiry and maximum uses
 
 Notes:
 
@@ -70,7 +73,7 @@ Parameters:
 
 Use Markdown Notes for detailed prompt rules, examples, and caveats. Mention the doc title in `description` when the AI should read it on demand.
 
-## `run_template(name, params, wait=true)`
+## `run_template(name, params, wait=true, template_token=null)`
 
 Runs one template.
 
@@ -79,6 +82,11 @@ Parameters:
 - `name`: template name
 - `params`: JSON string for template inputs, for example `'{"prompt": "a cat"}'`. Any string value may embed references inline as `@{<ref>}` (see [Inline References](#inline-references-ref)).
 - `wait`: whether to wait for completion, default `true`
+- `template_token`: required when token protection is enabled; use the field returned by `get_template()`
+
+A token expires when either its successfully queued execution limit or lifetime is reached. Call `get_template()` again for the current schema and a new token. Invalid parameters, a full queue, and failed submissions do not consume a use.
+
+This token prevents agents from reusing stale template context after compaction. It is not an authentication or access-control mechanism.
 
 For `wait=true`, the default timeout is controlled by **Settings → MCP Server → Execution → Run Template Timeout** and defaults to `120` seconds.
 
@@ -159,11 +167,13 @@ Multiple independent tasks:
     {
       "id": "cat",
       "template": "txt2img",
+      "template_token": "<token from get_template>",
       "params": {"prompt": "a cat"}
     },
     {
       "id": "dog",
       "template": "txt2img",
+      "template_token": "<token from get_template>",
       "params": {"prompt": "a dog"}
     }
   ]
@@ -178,6 +188,7 @@ Reference an earlier output inline only when a task needs it:
     {
       "id": "generate",
       "template": "txt2img",
+      "template_token": "<txt2img token>",
       "params": {
         "prompt": "a cat"
       }
@@ -185,6 +196,7 @@ Reference an earlier output inline only when a task needs it:
     {
       "id": "upscale",
       "template": "upscale",
+      "template_token": "<upscale token>",
       "params": {
         "image": "@{step://generate/output_image/0}",
         "scale": 2
@@ -272,6 +284,8 @@ Polls execution status or continues waiting for a result.
 In **Settings → MCP Server**:
 
 - **Execution → Run Template Timeout**: configure the default timeout for `run_template(wait=true)`
+- **Execution → Require Template Tokens**: require `get_template()` before execution to obtain a token
+- **Execution → Template Token Max Uses / Lifetime**: expire a token when either its queued-use count or lifetime is reached
 - **Templates**: view, refresh, enable, disable, and delete templates
 - **Auto Extract Templates**: scan workflows and create templates for workflows with a `title` Markdown Note
 - **Batch Refresh Templates**: re-extract inputs, outputs, title, and description from same-name workflows

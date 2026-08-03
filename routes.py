@@ -11,6 +11,7 @@ from server import PromptServer
 
 from .comfyui_client import ComfyUIClient
 from . import config, template_manager
+from .template_tokens import template_token_store
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,9 @@ def _setting_getters() -> dict[str, callable]:
         "update_doc_enabled": config.get_update_doc_enabled,
         "embed_workflow_metadata": config.get_embed_workflow_metadata,
         "max_concurrency": config.get_max_concurrency,
+        "template_token_enabled": config.get_template_token_enabled,
+        "template_token_max_uses": config.get_template_token_max_uses,
+        "template_token_ttl_hours": config.get_template_token_ttl_hours,
     }
 
 
@@ -32,6 +36,9 @@ def _setting_setters() -> dict[str, callable]:
         "update_doc_enabled": config.set_update_doc_enabled,
         "embed_workflow_metadata": config.set_embed_workflow_metadata,
         "max_concurrency": config.set_max_concurrency,
+        "template_token_enabled": config.set_template_token_enabled,
+        "template_token_max_uses": config.set_template_token_max_uses,
+        "template_token_ttl_hours": config.set_template_token_ttl_hours,
     }
 
 
@@ -85,22 +92,41 @@ async def set_runtime_setting(request):
             return web.json_response({"error": "value must be a number"}, status=400)
         if value <= 0:
             return web.json_response({"error": "value must be greater than 0"}, status=400)
-    elif key == "max_concurrency":
+    elif key in {"max_concurrency", "template_token_max_uses"}:
         try:
             value = int(raw_value)
         except (TypeError, ValueError):
             return web.json_response({"error": "value must be an integer"}, status=400)
-        # -1 (or any <= 0) means unlimited; positive ints enforce a cap.
-        if value != -1 and value <= 0:
+        if key == "max_concurrency" and value != -1 and value <= 0:
             return web.json_response(
                 {"error": "value must be -1 (unlimited) or a positive integer"}, status=400
             )
-    elif key in {"update_doc_enabled", "embed_workflow_metadata"}:
-        value = bool(raw_value)
+        if key == "template_token_max_uses" and value <= 0:
+            return web.json_response(
+                {"error": "value must be a positive integer"}, status=400
+            )
+    elif key == "template_token_ttl_hours":
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "value must be a number"}, status=400)
+        if value <= 0:
+            return web.json_response({"error": "value must be greater than 0"}, status=400)
+    elif key in {
+        "update_doc_enabled",
+        "embed_workflow_metadata",
+        "template_token_enabled",
+    }:
+        if isinstance(raw_value, bool):
+            value = raw_value
+        else:
+            value = str(raw_value).strip().lower() not in {"0", "false", "no", "off"}
     else:
         value = raw_value
 
     updated = setter(value)
+    if key.startswith("template_token_"):
+        template_token_store.clear()
     return web.json_response({"key": key, "value": updated})
 
 

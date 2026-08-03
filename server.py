@@ -56,6 +56,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "Execute ComfyUI templates for image generation, processing, and more. "
             "Use list_templates to discover templates, get_template for parameters, "
             "then run_template for one task or run_templates for multiple tasks in one call. "
+            "If get_template returns template_token_required=true, pass its template_token "
+            "to every execution of that template. "
             "run_templates steps may be independent or connected through inline references. "
             "Template outputs include `ref` values. "
             "When chaining templates, embed a ref inline in a parameter value as `@{<ref>}`. "
@@ -96,7 +98,9 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             if template_manager.is_template_disabled(template):
                 logger.warning(f"[MCP] get_template → disabled: {name}")
                 return _json({"error": f"Template '{name}' is disabled"})
-            return _json(template_manager.build_public_template_schema(template))
+            schema = template_manager.build_public_template_schema(template)
+            schema.update(template_manager.build_template_token_fields(template))
+            return _json(schema)
         except Exception as e:
             logger.error(f"[MCP] get_template error: {e}")
             return _json({"error": str(e)})
@@ -246,6 +250,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         name: str,
         params: str,
         wait: bool = True,
+        template_token: str | None = None,
     ) -> str:
         """Execute a template with the given parameters.
 
@@ -260,6 +265,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                 input, e.g. '{"image": "@{result://abc-123/图片/0"}'.
             wait: If true (default), wait for execution to complete and return results directly.
                   If false, return immediately with run_id for later polling via get_template_result.
+            template_token: Token returned by get_template. Required only when template token
+                protection is enabled in MCP Server settings.
         """
         effective_timeout = config.get_run_template_timeout()
         logger.info(
@@ -276,6 +283,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                 parameters,
                 wait=wait,
                 timeout=effective_timeout,
+                template_token=template_token,
+                enforce_template_token=True,
             )
             logger.info(f"[MCP] run_template → {result.get('status', 'unknown')}")
             return _format_template_result(result)
@@ -305,11 +314,13 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
                     {
                       "id": "generate",
                       "template": "txt2img",
+                      "template_token": "<token from get_template>",
                       "params": {"prompt": "a cat"}
                     },
                     {
                       "id": "upscale",
                       "template": "upscale",
+                      "template_token": "<token from get_template>",
                       "params": {"image": "@{step://generate/图片/0}", "scale": 2}
                     }
                   ]
@@ -402,8 +413,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             "### How to Use\n"
             "1. Call `list_templates()` to see all available templates with their names and titles.\n"
             "2. Call `get_template('<name>')` to see the template's inputs, outputs, and readable doc titles.\n"
+            "   - If it returns `template_token_required=true`, preserve `template_token` and pass it to execution.\n"
             "3. If you need extra docs, call `read_template_doc('<name>', '<title>')` for a specific documentation section.\n"
             "4. Call `run_template('<name>', '{\"param\": \"value\"}')` to execute with your parameters.\n"
+            "   - When required, pass the exact `template_token` returned by the latest `get_template` call.\n"
             "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"
             "   - By default, the call waits for completion and returns results directly.\n"
             "   - Set `wait=false` to return immediately with a `run_id` for later polling.\n"
