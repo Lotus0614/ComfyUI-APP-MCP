@@ -214,6 +214,11 @@ class TemplateTokenIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["error_code"], "TEMPLATE_TOKEN_REQUIRED")
         self.assertEqual(result["recovery"]["tool"], "get_template")
+        self.assertIn("read the current template information", result["error"])
+        self.assertIn(
+            "read the current template information",
+            result["recovery"]["instruction"],
+        )
 
     async def test_disabled_protection_preserves_existing_execution(self) -> None:
         client = SimpleNamespace(

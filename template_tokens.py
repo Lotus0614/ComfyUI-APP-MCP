@@ -11,6 +11,9 @@ from typing import Callable
 
 
 _TOKEN_STORE_MAX = 4096
+_RECOVERY_INSTRUCTION = (
+    "Call get_template to read the current template information and obtain a new token."
+)
 
 
 @dataclass
@@ -52,12 +55,13 @@ class TemplateTokenStore:
         return {
             "tool": "get_template",
             "arguments": {"name": template_name},
+            "instruction": _RECOVERY_INSTRUCTION,
         }
 
     def _error(self, code: str, message: str, template_name: str) -> dict:
         return {
             "error_code": code,
-            "error": message,
+            "error": f"{message} {_RECOVERY_INSTRUCTION}",
             "template": template_name,
             "recovery": self._recovery(template_name),
         }
@@ -108,15 +112,13 @@ class TemplateTokenStore:
         if token is None or token == "":
             return None, self._error(
                 "TEMPLATE_TOKEN_REQUIRED",
-                "A template token is required. Call get_template for the current "
-                "schema and token.",
+                "A template token is required.",
                 template_name,
             )
         if not isinstance(token, str):
             return None, self._error(
                 "TEMPLATE_TOKEN_INVALID",
-                "The template token must be a string. Call get_template to obtain "
-                "a new token.",
+                "The template token must be a string.",
                 template_name,
             )
 
@@ -124,7 +126,7 @@ class TemplateTokenStore:
         if record is None:
             return None, self._error(
                 "TEMPLATE_TOKEN_INVALID",
-                "The template token is invalid. Call get_template to obtain a new token.",
+                "The template token is invalid.",
                 template_name,
             )
         if record.template_name != template_name:
@@ -140,21 +142,19 @@ class TemplateTokenStore:
         ):
             return None, self._error(
                 "TEMPLATE_TOKEN_STALE",
-                "The template or token policy has changed. Call get_template to "
-                "obtain a new token.",
+                "The template or token policy has changed.",
                 template_name,
             )
         if self._clock() >= record.expires_at:
             return None, self._error(
                 "TEMPLATE_TOKEN_EXPIRED",
-                "The template token has expired. Call get_template to obtain a new token.",
+                "The template token has expired.",
                 template_name,
             )
         if record.uses + len(record.reservations) >= record.max_uses:
             return None, self._error(
                 "TEMPLATE_TOKEN_EXHAUSTED",
-                "The template token has reached its execution limit. Call "
-                "get_template to obtain a new token.",
+                "The template token has reached its execution limit.",
                 template_name,
             )
         return record, None
