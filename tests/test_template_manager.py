@@ -407,5 +407,258 @@ class TemplateTokenIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs["enforce_template_token"])
 
 
+class AppModeInputFormatTests(unittest.TestCase):
+    @staticmethod
+    def _new_format_workflow() -> dict:
+        subgraph_id = "subgraph-uuid"
+        return {
+            "nodes": [
+                {
+                    "id": 5,
+                    "type": "KSamplerAdvanced",
+                    "inputs": [
+                        {
+                            "name": "steps",
+                            "type": "INT",
+                            "widget": {"name": "steps"},
+                            "link": None,
+                        }
+                    ],
+                    "widgets_values": [20, 8.0],
+                },
+                {
+                    "id": 6,
+                    "type": "EmptyLatentImage",
+                    "inputs": [
+                        {
+                            "name": "width",
+                            "type": "INT",
+                            "widget": {"name": "width"},
+                            "link": None,
+                        },
+                        {
+                            "name": "height",
+                            "type": "INT",
+                            "widget": {"name": "height"},
+                            "link": None,
+                        },
+                    ],
+                    "widgets_values": [1024, 1024],
+                },
+                {
+                    "id": 11,
+                    "type": subgraph_id,
+                    "inputs": [
+                        {"name": "clip", "type": "CLIP", "link": 11},
+                        {
+                            "name": "text",
+                            "label": "stale_prompt_label",
+                            "type": "STRING",
+                            "widget": {"name": "text"},
+                            "link": None,
+                        },
+                        {
+                            "name": "text_1",
+                            "label": "stale_negative_label",
+                            "type": "STRING",
+                            "widget": {"name": "text_1"},
+                            "link": None,
+                        },
+                    ],
+                    "widgets_values": ["", ""],
+                },
+            ],
+            "definitions": {
+                "subgraphs": [
+                    {
+                        "id": subgraph_id,
+                        "inputs": [
+                            {"name": "clip", "type": "CLIP", "linkIds": [1, 2]},
+                            {
+                                "name": "text",
+                                "label": "negative_prompt",
+                                "type": "STRING",
+                                "linkIds": [14],
+                            },
+                            {
+                                "name": "text_1",
+                                "label": "prompt",
+                                "type": "STRING",
+                                "linkIds": [15],
+                            },
+                        ],
+                        "nodes": [
+                            {
+                                "id": 2,
+                                "type": "CLIPTextEncode",
+                                "inputs": [
+                                    {"name": "clip", "type": "CLIP", "link": 1},
+                                    {
+                                        "name": "text",
+                                        "label": "prompt",
+                                        "type": "STRING",
+                                        "widget": {"name": "text"},
+                                        "link": 15,
+                                    },
+                                ],
+                                "widgets_values": [""],
+                            },
+                            {
+                                "id": 3,
+                                "type": "CLIPTextEncode",
+                                "inputs": [
+                                    {"name": "clip", "type": "CLIP", "link": 2},
+                                    {
+                                        "name": "text",
+                                        "label": "negative_prompt",
+                                        "type": "STRING",
+                                        "widget": {"name": "text"},
+                                        "link": 14,
+                                    },
+                                ],
+                                "widgets_values": [""],
+                            },
+                        ],
+                        "links": [
+                            {
+                                "id": 14,
+                                "origin_id": -10,
+                                "origin_slot": 1,
+                                "target_id": 3,
+                                "target_slot": 1,
+                                "type": "STRING",
+                            },
+                            {
+                                "id": 15,
+                                "origin_id": -10,
+                                "origin_slot": 2,
+                                "target_id": 2,
+                                "target_slot": 1,
+                                "type": "STRING",
+                            },
+                        ],
+                    }
+                ]
+            },
+            "extra": {
+                "linearData": {
+                    "inputs": [
+                        ["opaque-uuid:6:width", "width"],
+                        ["opaque-uuid:6:height", "height"],
+                        ["opaque-uuid:5:steps", "steps"],
+                        ["opaque-uuid:5:cfg", "cfg"],
+                        ["opaque-uuid:11:text_1", "text_1"],
+                        ["opaque-uuid:11:text", "text"],
+                    ]
+                }
+            },
+        }
+
+    @staticmethod
+    def _node_defs() -> dict:
+        return {
+            "KSamplerAdvanced": {
+                "input": {
+                    "required": {
+                        "steps": ["INT", {"default": 20}],
+                        "cfg": ["FLOAT", {"default": 8.0}],
+                    }
+                }
+            },
+            "EmptyLatentImage": {
+                "input": {
+                    "required": {
+                        "width": ["INT", {"default": 1024}],
+                        "height": ["INT", {"default": 1024}],
+                    }
+                }
+            },
+            "CLIPTextEncode": {
+                "input": {
+                    "required": {
+                        "clip": ["CLIP"],
+                        "text": ["STRING", {"default": ""}],
+                    }
+                }
+            },
+        }
+
+    def test_parses_old_and_new_linear_input_ids(self) -> None:
+        self.assertEqual(
+            tm._parse_linear_input_entry(["10", "width"]),
+            ([10], "width", False),
+        )
+        self.assertEqual(
+            tm._parse_linear_input_entry(["opaque-uuid:11:text", "text"]),
+            ([11], "text", True),
+        )
+        self.assertIsNone(tm._parse_linear_input_entry(["bad", "text"]))
+
+    def test_extracts_new_top_level_and_subgraph_inputs(self) -> None:
+        inputs = tm._extract_inputs(self._new_format_workflow(), self._node_defs())
+
+        self.assertEqual(
+            set(inputs),
+            {"width", "height", "steps", "cfg", "prompt", "negative_prompt"},
+        )
+        self.assertEqual(inputs["cfg"]["api_key"], "5")
+        self.assertEqual(inputs["cfg"]["type"], "FLOAT")
+        self.assertEqual(inputs["prompt"]["api_key"], "11:2")
+        self.assertEqual(inputs["prompt"]["widget"], "text")
+        self.assertEqual(inputs["negative_prompt"]["api_key"], "11:3")
+
+    def test_new_format_values_reach_api_prompt_and_ui_workflow(self) -> None:
+        workflow = self._new_format_workflow()
+        node_defs = self._node_defs()
+        inputs = tm._extract_inputs(workflow, node_defs)
+        params = {
+            "width": 768,
+            "cfg": 6.5,
+            "prompt": "a lighthouse",
+            "negative_prompt": "fog",
+        }
+        api_prompt = {
+            "5": {"inputs": {"steps": 20, "cfg": 8.0}},
+            "6": {"inputs": {"width": 1024, "height": 1024}},
+            "11:2": {"inputs": {"text": ""}},
+            "11:3": {"inputs": {"text": ""}},
+        }
+
+        injected_prompt = tm._inject_widget_values(api_prompt, inputs, params)
+        self.assertEqual(injected_prompt["6"]["inputs"]["width"], 768)
+        self.assertEqual(injected_prompt["5"]["inputs"]["cfg"], 6.5)
+        self.assertEqual(injected_prompt["11:2"]["inputs"]["text"], "a lighthouse")
+        self.assertEqual(injected_prompt["11:3"]["inputs"]["text"], "fog")
+
+        injected_workflow = tm._inject_widget_values_into_workflow(
+            workflow, inputs, params, node_defs
+        )
+        self.assertEqual(
+            tm._find_node_by_api_key(injected_workflow, "6")["widgets_values"][0],
+            768,
+        )
+        self.assertEqual(
+            tm._find_node_by_api_key(injected_workflow, "5")["widgets_values"][1],
+            6.5,
+        )
+        self.assertEqual(
+            tm._find_node_by_api_key(injected_workflow, "11:2")["widgets_values"][0],
+            "a lighthouse",
+        )
+        self.assertEqual(
+            tm._find_node_by_api_key(injected_workflow, "11:3")["widgets_values"][0],
+            "fog",
+        )
+
+    def test_legacy_internal_node_id_still_resolves(self) -> None:
+        workflow = self._new_format_workflow()
+        workflow["extra"]["linearData"]["inputs"] = [["2", "text"]]
+
+        inputs = tm._extract_inputs(workflow, self._node_defs())
+
+        self.assertEqual(inputs["stale_prompt_label"]["node_id"], 2)
+        self.assertEqual(inputs["stale_prompt_label"]["api_key"], "11:2")
+
+
 if __name__ == "__main__":
     unittest.main()

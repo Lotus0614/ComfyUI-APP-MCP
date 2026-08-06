@@ -442,6 +442,178 @@ def _collect_workflow_nodes(workflow: dict) -> tuple[dict, dict, dict]:
     return node_by_id, api_key_by_id, instance_by_internal_id
 
 
+def _subgraph_definitions(workflow: dict) -> dict:
+    """Return subgraph definitions keyed by their UUID."""
+    definitions = workflow.get("definitions") or {}
+    subgraphs = (
+        definitions.get("subgraphs") if isinstance(definitions, dict) else None
+    )
+    if not isinstance(subgraphs, list):
+        return {}
+    return {
+        subgraph.get("id"): subgraph
+        for subgraph in subgraphs
+        if isinstance(subgraph, dict) and subgraph.get("id") is not None
+    }
+
+
+def _parse_linear_input_entry(item) -> tuple[list[int], str, bool] | None:
+    """Parse old and new ``linearData.inputs`` entries.
+
+    Old ComfyUI versions store a plain node id, for example ``["10",
+    "width"]``. New versions store a node-locator plus the widget name, for
+    example ``["<opaque-uuid>:6:width", "width"]``. The opaque locator prefix
+    is intentionally ignored; only its trailing numeric node path is needed to
+    locate the workflow node and build the API prompt key.
+
+    Returns ``(node_path, widget_name, is_locator)``. ``node_path`` contains
+    one id for a top-level node and may contain more ids for nested subgraphs.
+    """
+    raw_locator = item[0] if isinstance(item, list) and item else item
+    listed_widget = item[1] if isinstance(item, list) and len(item) > 1 else None
+
+    if isinstance(raw_locator, bool):
+        return None
+    if isinstance(raw_locator, int):
+        return [raw_locator], str(listed_widget or ""), False
+    if not isinstance(raw_locator, str) or not raw_locator:
+        return None
+
+    try:
+        return [int(raw_locator)], str(listed_widget or ""), False
+    except ValueError:
+        pass
+
+    parts = raw_locator.split(":")
+    locator_widget = ""
+    if parts and listed_widget is not None and parts[-1] == str(listed_widget):
+        locator_widget = parts.pop()
+
+    node_path = []
+    for part in reversed(parts):
+        try:
+            node_path.append(int(part))
+        except (TypeError, ValueError):
+            break
+    node_path.reverse()
+    widget_name = str(listed_widget or locator_widget)
+    if not node_path or not widget_name:
+        return None
+    return node_path, widget_name, True
+
+
+def _find_node_by_path(workflow: dict, node_path: list[int]) -> dict | None:
+    """Resolve a top-level/subgraph node path such as ``[11, 2]``."""
+    if not node_path:
+        return None
+
+    subgraphs = _subgraph_definitions(workflow)
+    nodes = workflow.get("nodes", []) or []
+    node = None
+    for index, node_id in enumerate(node_path):
+        node = next((item for item in nodes if item.get("id") == node_id), None)
+        if node is None:
+            return None
+        if index < len(node_path) - 1:
+            subgraph = subgraphs.get(node.get("type"))
+            if not subgraph:
+                return None
+            nodes = subgraph.get("nodes", []) or []
+    return node
+
+
+def _find_node_by_api_key(workflow: dict, api_key: str) -> dict | None:
+    """Resolve the numeric node path used by converted API prompts."""
+    try:
+        node_path = [int(part) for part in str(api_key).split(":")]
+    except (TypeError, ValueError):
+        return None
+    return _find_node_by_path(workflow, node_path)
+
+
+def _resolve_subgraph_widget_binding(
+    workflow: dict,
+    instance_node: dict,
+    instance_path: list[int],
+    exposed_widget: str,
+) -> dict | None:
+    """Resolve a subgraph instance widget to its internal executable input."""
+    subgraph = _subgraph_definitions(workflow).get(instance_node.get("type"))
+    if not subgraph:
+        return None
+
+    subgraph_inputs = subgraph.get("inputs", []) or []
+    input_index = next(
+        (
+            index
+            for index, input_meta in enumerate(subgraph_inputs)
+            if input_meta.get("name") == exposed_widget
+        ),
+        None,
+    )
+    if input_index is None:
+        return None
+    subgraph_input = subgraph_inputs[input_index]
+    link_ids = set(subgraph_input.get("linkIds") or [])
+
+    for link in subgraph.get("links", []) or []:
+        if not isinstance(link, dict):
+            continue
+        matches_slot = (
+            link.get("origin_id") == -10 and link.get("origin_slot") == input_index
+        )
+        if not matches_slot and (not link_ids or link.get("id") not in link_ids):
+            continue
+
+        target_id = link.get("target_id")
+        target_slot = link.get("target_slot")
+        internal_node = next(
+            (
+                node
+                for node in subgraph.get("nodes", []) or []
+                if node.get("id") == target_id
+            ),
+            None,
+        )
+        internal_inputs = internal_node.get("inputs", []) if internal_node else []
+        if (
+            not isinstance(target_slot, int)
+            or target_slot < 0
+            or target_slot >= len(internal_inputs)
+        ):
+            continue
+        internal_input = internal_inputs[target_slot]
+        widget_info = internal_input.get("widget") or {}
+        internal_widget = widget_info.get("name") or internal_input.get("name")
+        if not internal_widget:
+            continue
+
+        instance_input = next(
+            (
+                input_meta
+                for input_meta in instance_node.get("inputs", []) or []
+                if (input_meta.get("widget") or {}).get("name") == exposed_widget
+                or input_meta.get("name") == exposed_widget
+            ),
+            {},
+        )
+        label = (
+            subgraph_input.get("label")
+            or internal_input.get("label")
+            or instance_input.get("label")
+            or exposed_widget
+        )
+        target_path = [*instance_path, target_id]
+        return {
+            "node": internal_node,
+            "node_id": target_id,
+            "api_key": ":".join(str(node_id) for node_id in target_path),
+            "widget": internal_widget,
+            "label": label,
+        }
+    return None
+
+
 def _resolve_input_label(instance_node: dict | None, internal_input: dict, widget_name: str) -> str:
     """Pick the display label for a subgraph-internal (or top-level) input.
 
@@ -461,8 +633,9 @@ def _resolve_input_label(instance_node: dict | None, internal_input: dict, widge
 def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
     """Extract inputs from linearData.inputs."""
     node_map, api_key_map, instance_by_internal = _collect_workflow_nodes(workflow)
+    subgraphs = _subgraph_definitions(workflow)
 
-    linear_inputs = []  # list of (node_id, widget_name)
+    linear_inputs = []
     extra = workflow.get("extra", {})
     if isinstance(extra, dict):
         linear = extra.get("linearData", {})
@@ -470,22 +643,44 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
             li = linear.get("inputs")
             if isinstance(li, list):
                 for item in li:
-                    # item = [node_id, widget_name]
-                    try:
-                        node_id = int(item[0]) if isinstance(item, list) else int(item)
-                    except (TypeError, ValueError, IndexError):
+                    parsed = _parse_linear_input_entry(item)
+                    if parsed is None:
                         logger.warning(f"[Template] Skipping malformed linearData input entry: {item!r}")
                         continue
-                    widget = item[1] if isinstance(item, list) and len(item) > 1 else None
-                    linear_inputs.append((node_id, widget))
+                    linear_inputs.append(parsed)
 
     inputs = {}
-    for node_id, target_widget in linear_inputs:
-        node = node_map.get(node_id)
+    for node_path, target_widget, is_locator in linear_inputs:
+        binding = None
+        if is_locator:
+            node = _find_node_by_path(workflow, node_path)
+            if node and node.get("type") in subgraphs:
+                binding = _resolve_subgraph_widget_binding(
+                    workflow, node, node_path, target_widget
+                )
+                if not binding:
+                    logger.warning(
+                        "[Template] Could not resolve subgraph input locator: "
+                        f"{node_path!r}:{target_widget}"
+                    )
+                    continue
+            node_id = binding["node_id"] if binding else node_path[-1]
+            api_key = (
+                binding["api_key"]
+                if binding
+                else ":".join(str(path_node_id) for path_node_id in node_path)
+            )
+            instance = None
+        else:
+            node_id = node_path[0]
+            node = node_map.get(node_id)
+            api_key = api_key_map.get(node_id, str(node_id))
+            instance = instance_by_internal.get(node_id)
+
+        if binding:
+            node = binding["node"]
         if not node:
             continue
-        api_key = api_key_map.get(node_id, str(node_id))
-        instance = instance_by_internal.get(node_id)  # None for top-level nodes
         widgets_values = node.get("widgets_values", [])
         found = False
 
@@ -495,9 +690,14 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                 continue
             widget_name = widget_info.get("name", inp.get("name", ""))
             # Only register the widget specified in linearData
-            if target_widget and widget_name != target_widget:
+            resolved_widget = binding["widget"] if binding else target_widget
+            if resolved_widget and widget_name != resolved_widget:
                 continue
-            label = _resolve_input_label(instance, inp, widget_name)
+            label = (
+                binding["label"]
+                if binding
+                else _resolve_input_label(instance, inp, widget_name)
+            )
             found = True
 
             entry = {
@@ -514,28 +714,40 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
 
             inputs[label] = entry
 
-        # Fallback: check hidden inputs from node_defs (e.g., lora_loader_data)
-        if target_widget and not found and node_defs:
+        # New ComfyUI workflows may omit non-favorited widgets from a node's
+        # serialized inputs. Recover them from object_info, including hidden
+        # inputs such as lora_loader_data.
+        resolved_widget = binding["widget"] if binding else target_widget
+        if resolved_widget and not found and node_defs:
             class_type = node.get("type", "")
             node_def = node_defs.get(class_type, {})
             input_def = node_def.get("input", {})
-            hidden = input_def.get("hidden", {})
-            if target_widget in hidden:
-                spec = hidden[target_widget]
+            spec = None
+            spec_section = None
+            for section_name in ("required", "optional", "hidden"):
+                section = input_def.get(section_name, {})
+                if resolved_widget in section:
+                    spec = section[resolved_widget]
+                    spec_section = section_name
+                    break
+            if spec is not None and (
+                spec_section == "hidden" or _is_widget_input(spec)
+            ):
                 widget_type = spec[0] if isinstance(spec, list) and spec else "STRING"
                 if isinstance(widget_type, list):
                     widget_type = "COMBO"
                 entry = {
                     "node_id": node_id,
                     "api_key": api_key,
-                    "widget": target_widget,
+                    "widget": resolved_widget,
                     "type": widget_type if isinstance(widget_type, str) else "STRING",
                 }
                 if widgets_values:
-                    default = _read_widget_default(node, target_widget, node_defs)
+                    default = _read_widget_default(node, resolved_widget, node_defs)
                     if default is not None:
                         entry["default"] = default
-                inputs[target_widget] = entry
+                label = binding["label"] if binding else resolved_widget
+                inputs[label] = entry
     return inputs
 
 
@@ -623,7 +835,12 @@ def _inject_widget_values_into_workflow(
         inp = inputs.get(param_name)
         if not inp:
             continue
-        node = node_map.get(inp["node_id"])
+        # api_key contains the exact subgraph instance path (for example
+        # ``11:2``). Older templates without it keep using the node-id lookup.
+        api_key = inp.get("api_key")
+        node = _find_node_by_api_key(wf, api_key) if api_key is not None else None
+        if node is None:
+            node = node_map.get(inp.get("node_id"))
         if not node:
             continue
         widgets_values = node.get("widgets_values")
