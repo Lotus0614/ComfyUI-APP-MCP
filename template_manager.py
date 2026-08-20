@@ -8,7 +8,7 @@ import copy
 import hashlib
 import json
 import logging
-import random
+import secrets
 import re
 import time
 from urllib.parse import quote, unquote, urlencode, urlparse
@@ -1757,7 +1757,7 @@ async def execute_template(
     outputs = template.get("outputs", {})
     params = {
         **{
-            input_name: random.randint(0, _MAX_COMFY_SEED)
+            input_name: secrets.randbelow(_MAX_COMFY_SEED + 1)
             for input_name in inputs
             if input_name == _SEED_INPUT_NAME
         },
