@@ -614,6 +614,79 @@ def _resolve_subgraph_widget_binding(
     return None
 
 
+def _infer_workflow_widget_binding(
+    workflow: dict,
+    api_key: str,
+    widget_name: str,
+) -> tuple[str, str] | None:
+    """Infer the outer subgraph widget for templates saved without UI metadata."""
+    try:
+        node_path = [int(part) for part in str(api_key).split(":")]
+    except (TypeError, ValueError):
+        return None
+    if len(node_path) < 2:
+        return None
+
+    instance_path = node_path[:-1]
+    internal_node_id = node_path[-1]
+    instance_node = _find_node_by_path(workflow, instance_path)
+    if instance_node is None:
+        return None
+    subgraph = _subgraph_definitions(workflow).get(instance_node.get("type"))
+    if not subgraph:
+        return None
+
+    internal_node = next(
+        (
+            node
+            for node in subgraph.get("nodes", []) or []
+            if node.get("id") == internal_node_id
+        ),
+        None,
+    )
+    if internal_node is None:
+        return None
+    target_slot = next(
+        (
+            index
+            for index, input_meta in enumerate(internal_node.get("inputs", []) or [])
+            if (
+                (input_meta.get("widget") or {}).get("name")
+                or input_meta.get("name")
+            )
+            == widget_name
+        ),
+        None,
+    )
+    if target_slot is None:
+        return None
+
+    subgraph_inputs = subgraph.get("inputs", []) or []
+    for link in subgraph.get("links", []) or []:
+        if not isinstance(link, dict):
+            continue
+        if (
+            link.get("origin_id") != -10
+            or link.get("target_id") != internal_node_id
+            or link.get("target_slot") != target_slot
+        ):
+            continue
+        origin_slot = link.get("origin_slot")
+        if (
+            not isinstance(origin_slot, int)
+            or origin_slot < 0
+            or origin_slot >= len(subgraph_inputs)
+        ):
+            continue
+        exposed_widget = subgraph_inputs[origin_slot].get("name")
+        if exposed_widget:
+            return (
+                ":".join(str(path_node_id) for path_node_id in instance_path),
+                exposed_widget,
+            )
+    return None
+
+
 def _resolve_input_label(instance_node: dict | None, internal_input: dict, widget_name: str) -> str:
     """Pick the display label for a subgraph-internal (or top-level) input.
 
@@ -652,6 +725,8 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
     inputs = {}
     for node_path, target_widget, is_locator in linear_inputs:
         binding = None
+        workflow_key = None
+        workflow_widget = None
         if is_locator:
             node = _find_node_by_path(workflow, node_path)
             if node and node.get("type") in subgraphs:
@@ -664,6 +739,14 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                         f"{node_path!r}:{target_widget}"
                     )
                     continue
+                # The converted API prompt targets the internal executable
+                # node, while the serialized UI workflow also keeps the value
+                # on the outer subgraph instance's promoted widget. Preserve
+                # both locations so embedded workflows reopen with run values.
+                workflow_key = ":".join(
+                    str(path_node_id) for path_node_id in node_path
+                )
+                workflow_widget = target_widget
             node_id = binding["node_id"] if binding else node_path[-1]
             api_key = (
                 binding["api_key"]
@@ -706,6 +789,9 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                 "widget": widget_name,
                 "type": inp.get("type", "STRING"),
             }
+            if workflow_key is not None:
+                entry["workflow_key"] = workflow_key
+                entry["workflow_widget"] = workflow_widget
 
             if widgets_values and node_defs:
                 default = _read_widget_default(node, widget_name, node_defs)
@@ -742,6 +828,9 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                     "widget": resolved_widget,
                     "type": widget_type if isinstance(widget_type, str) else "STRING",
                 }
+                if workflow_key is not None:
+                    entry["workflow_key"] = workflow_key
+                    entry["workflow_widget"] = workflow_widget
                 if widgets_values:
                     default = _read_widget_default(node, resolved_widget, node_defs)
                     if default is not None:
@@ -813,6 +902,38 @@ def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
     return None
 
 
+def _write_widget_value(
+    node: dict,
+    widget_name: str,
+    value,
+    node_defs: dict,
+) -> bool:
+    """Write one serialized widget value, including subgraph proxy widgets."""
+    widgets_values = node.get("widgets_values")
+    if not isinstance(widgets_values, list):
+        return False
+
+    for current_name, index in _widget_value_slots(node, node_defs):
+        if current_name == widget_name and index < len(widgets_values):
+            widgets_values[index] = value
+            return True
+
+    # Subgraph instance types are UUIDs and therefore absent from object_info.
+    # Their serialized inputs still identify promoted widgets in the same
+    # order as widgets_values, so use that order as the UI-graph fallback.
+    value_index = 0
+    for input_meta in node.get("inputs", []) or []:
+        widget_meta = input_meta.get("widget")
+        if not isinstance(widget_meta, dict):
+            continue
+        current_name = widget_meta.get("name") or input_meta.get("name")
+        if current_name == widget_name and value_index < len(widgets_values):
+            widgets_values[value_index] = value
+            return True
+        value_index += 1
+    return False
+
+
 def _inject_widget_values_into_workflow(
     workflow: dict, inputs: dict, params: dict, node_defs: dict
 ) -> dict:
@@ -841,16 +962,31 @@ def _inject_widget_values_into_workflow(
         node = _find_node_by_api_key(wf, api_key) if api_key is not None else None
         if node is None:
             node = node_map.get(inp.get("node_id"))
-        if not node:
-            continue
-        widgets_values = node.get("widgets_values")
-        if not isinstance(widgets_values, list) or not widgets_values:
-            continue
-        widget_name = inp["widget"]
-        for wname, idx in _widget_value_slots(node, node_defs):
-            if wname == widget_name and idx < len(widgets_values):
-                widgets_values[idx] = value
-                break
+        if node:
+            _write_widget_value(node, inp["widget"], value, node_defs)
+
+        # New App Mode locators for promoted subgraph widgets resolve to an
+        # internal API node, but ComfyUI serializes a second copy of the value
+        # on the outer subgraph instance. Keep that copy in sync as well.
+        workflow_key = inp.get("workflow_key")
+        workflow_widget = inp.get("workflow_widget")
+        if workflow_key is None or not workflow_widget:
+            inferred_binding = _infer_workflow_widget_binding(
+                wf,
+                api_key,
+                inp["widget"],
+            )
+            if inferred_binding is not None:
+                workflow_key, workflow_widget = inferred_binding
+        if workflow_key is not None and workflow_widget:
+            workflow_node = _find_node_by_api_key(wf, workflow_key)
+            if workflow_node is not None and workflow_node is not node:
+                _write_widget_value(
+                    workflow_node,
+                    workflow_widget,
+                    value,
+                    node_defs,
+                )
     return wf
 
 
