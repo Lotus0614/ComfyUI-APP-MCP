@@ -659,6 +659,56 @@ class AppModeInputFormatTests(unittest.TestCase):
         self.assertEqual(inputs["stale_prompt_label"]["node_id"], 2)
         self.assertEqual(inputs["stale_prompt_label"]["api_key"], "11:2")
 
+    def test_subgraph_default_prefers_instance_copy(self) -> None:
+        """Canvas edits land on the instance node; the internal copy can lag.
+
+        Refresh must extract the instance copy so user-entered values survive.
+        """
+        workflow = self._new_format_workflow()
+        subgraph = workflow["definitions"]["subgraphs"][0]
+        instance = workflow["nodes"][2]
+        instance["widgets_values"] = ["negative-instance", "prompt-instance"]
+        for node in subgraph["nodes"]:
+            if node["id"] == 2:
+                node["widgets_values"] = ["prompt-internal"]
+            elif node["id"] == 3:
+                node["widgets_values"] = ["negative-internal"]
+
+        inputs = tm._extract_inputs(workflow, self._node_defs())
+
+        self.assertEqual(inputs["prompt"]["default"], "prompt-instance")
+        self.assertEqual(inputs["negative_prompt"]["default"], "negative-instance")
+        self.assertEqual(inputs["prompt"]["workflow_key"], "11")
+        self.assertEqual(inputs["prompt"]["workflow_widget"], "text_1")
+
+    def test_subgraph_default_falls_back_to_internal_node(self) -> None:
+        """When the instance copy is unreadable, the internal node still works."""
+        workflow = self._new_format_workflow()
+        subgraph = workflow["definitions"]["subgraphs"][0]
+        instance = workflow["nodes"][2]
+        instance["widgets_values"] = []
+        for node in subgraph["nodes"]:
+            if node["id"] == 2:
+                node["widgets_values"] = ["prompt-internal"]
+            elif node["id"] == 3:
+                node["widgets_values"] = ["negative-internal"]
+
+        inputs = tm._extract_inputs(workflow, self._node_defs())
+
+        self.assertEqual(inputs["prompt"]["default"], "prompt-internal")
+        self.assertEqual(inputs["negative_prompt"]["default"], "negative-internal")
+
+    def test_top_level_default_still_reads_from_own_node(self) -> None:
+        """Non-subgraph locators (top-level nodes) keep reading their own copy."""
+        workflow = self._new_format_workflow()
+        workflow["nodes"][1]["widgets_values"] = [640, 480]
+
+        inputs = tm._extract_inputs(workflow, self._node_defs())
+
+        self.assertEqual(inputs["width"]["default"], 640)
+        self.assertEqual(inputs["height"]["default"], 480)
+        self.assertNotIn("workflow_key", inputs["width"])
+
 
 if __name__ == "__main__":
     unittest.main()

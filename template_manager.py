@@ -793,8 +793,15 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                 entry["workflow_key"] = workflow_key
                 entry["workflow_widget"] = workflow_widget
 
-            if widgets_values and node_defs:
-                default = _read_widget_default(node, widget_name, node_defs)
+            if node_defs:
+                default = _read_extracted_default(
+                    workflow,
+                    node,
+                    widget_name,
+                    workflow_key,
+                    workflow_widget,
+                    node_defs,
+                )
                 if default is not None:
                     entry["default"] = default
 
@@ -831,10 +838,16 @@ def _extract_inputs(workflow: dict, node_defs: dict | None = None) -> dict:
                 if workflow_key is not None:
                     entry["workflow_key"] = workflow_key
                     entry["workflow_widget"] = workflow_widget
-                if widgets_values:
-                    default = _read_widget_default(node, resolved_widget, node_defs)
-                    if default is not None:
-                        entry["default"] = default
+                default = _read_extracted_default(
+                    workflow,
+                    node,
+                    resolved_widget,
+                    workflow_key,
+                    workflow_widget,
+                    node_defs,
+                )
+                if default is not None:
+                    entry["default"] = default
                 label = binding["label"] if binding else resolved_widget
                 inputs[label] = entry
     return inputs
@@ -902,6 +915,71 @@ def _read_widget_default(node: dict, widget_name: str, node_defs: dict):
     return None
 
 
+def _read_instance_widget_default(node: dict, widget_name: str):
+    """Read a promoted widget value from a subgraph instance node.
+
+    Subgraph instance types are UUIDs and therefore absent from object_info,
+    so ``_widget_value_slots`` cannot map them. Their serialized inputs still
+    identify promoted widgets in the same order as widgets_values, so the
+    UI-graph input order is used instead.
+    """
+    widgets_values = node.get("widgets_values")
+    index = _widget_ui_slot(node, widget_name)
+    if index is not None:
+        return widgets_values[index]
+    return None
+
+
+def _read_extracted_default(
+    workflow: dict,
+    internal_node: dict,
+    widget_name: str,
+    workflow_key: str | None,
+    workflow_widget: str | None,
+    node_defs: dict,
+):
+    """Read a widget's current value, preferring the outer subgraph instance copy.
+
+    ComfyUI serializes promoted subgraph widgets twice: on the subgraph instance
+    node (where canvas edits land) and on the internal executable node (which can
+    lag behind those edits). Prefer the instance copy when the entry locates one
+    so refreshed templates pick up the values the user entered; fall back to the
+    internal node so older formats without subgraph metadata keep working.
+    """
+    if workflow_key is not None and workflow_widget:
+        instance_node = _find_node_by_api_key(workflow, workflow_key)
+        if instance_node is not None:
+            value = _read_widget_default(instance_node, workflow_widget, node_defs)
+            if value is None:
+                value = _read_instance_widget_default(instance_node, workflow_widget)
+            if value is not None:
+                return value
+    return _read_widget_default(internal_node, widget_name, node_defs)
+
+
+def _widget_ui_slot(node: dict, widget_name: str) -> int | None:
+    """Map a widget name to its widgets_values index using serialized input order.
+
+    Subgraph instance types are UUIDs and therefore absent from object_info, so
+    ``_widget_value_slots`` cannot map them. Their serialized inputs still list
+    promoted widgets in the same order as widgets_values, so that order serves
+    as the UI-graph fallback for both reading and writing.
+    """
+    widgets_values = node.get("widgets_values")
+    if not isinstance(widgets_values, list):
+        return None
+    value_index = 0
+    for input_meta in node.get("inputs", []) or []:
+        widget_meta = input_meta.get("widget")
+        if not isinstance(widget_meta, dict):
+            continue
+        current_name = widget_meta.get("name") or input_meta.get("name")
+        if current_name == widget_name and value_index < len(widgets_values):
+            return value_index
+        value_index += 1
+    return None
+
+
 def _write_widget_value(
     node: dict,
     widget_name: str,
@@ -921,16 +999,10 @@ def _write_widget_value(
     # Subgraph instance types are UUIDs and therefore absent from object_info.
     # Their serialized inputs still identify promoted widgets in the same
     # order as widgets_values, so use that order as the UI-graph fallback.
-    value_index = 0
-    for input_meta in node.get("inputs", []) or []:
-        widget_meta = input_meta.get("widget")
-        if not isinstance(widget_meta, dict):
-            continue
-        current_name = widget_meta.get("name") or input_meta.get("name")
-        if current_name == widget_name and value_index < len(widgets_values):
-            widgets_values[value_index] = value
-            return True
-        value_index += 1
+    index = _widget_ui_slot(node, widget_name)
+    if index is not None:
+        widgets_values[index] = value
+        return True
     return False
 
 
