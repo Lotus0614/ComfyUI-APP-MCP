@@ -485,6 +485,13 @@ def _parse_linear_input_entry(item) -> tuple[list[int], str, bool] | None:
         pass
 
     parts = raw_locator.split(":")
+    # ComfyUI percent-encodes non-ASCII widget names in the locator's trailing
+    # segment (e.g. "uuid:51:%E6%80%BB%E5%BC%80%E5%85%B3"). Decode it so the
+    # widget-name comparison below can match ``listed_widget``; otherwise the
+    # reversed numeric-path scan breaks on the encoded segment and the entry is
+    # dropped entirely.
+    if len(parts) > 1:
+        parts[-1] = unquote(parts[-1])
     locator_widget = ""
     if parts and listed_widget is not None and parts[-1] == str(listed_widget):
         locator_widget = parts.pop()
