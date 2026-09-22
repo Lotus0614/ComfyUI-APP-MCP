@@ -87,8 +87,8 @@ For LAN or remote access, replace `127.0.0.1` with the actual ComfyUI/MCP host. 
 | `read_template_doc(name, title)` | Read extra template docs | When `description` points to more docs |
 | `run_template()` | Run one template | Text-to-image, image-to-image, upscale, post-process, etc. |
 | `run_templates()` | Run multiple tasks and return every step result | Batch generation or generate → upscale workflows |
-| `upload_image(source)` | Upload a new user-provided image | When the image comes from local path, URL, or base64 |
-| `list_models(folder, keywords)` | Browse model folders | When selecting checkpoints, LoRAs, VAEs, etc. |
+| `upload_image(source)` | Upload a new user-provided image (compatibility tool) | When the image comes from local path, URL, or base64; prefer `@{ref}` in template parameters |
+| `list_models(folder, keywords)` | Browse model folders | When selecting checkpoints, LoRAs, VAEs, etc.; supports spaces/`&` AND and `|` OR |
 | `get_template_result()` | Poll or continue waiting | When a run times out or is async |
 
 See [Tool Reference](./docs/en/tools.md) for full parameters, return formats, and examples.

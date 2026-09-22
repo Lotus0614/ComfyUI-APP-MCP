@@ -9,7 +9,7 @@ MCP 调用会在 ComfyUI 控制台打印，以 `[MCP]` 为前缀：
 ```text
 [MCP] list_templates() → 3 templates
 [MCP] run_template(name='txt2img', params={"positive_prompt": "a cat"}) → completed
-[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_4b2f...a91c.png", "subfolder": "", "type": "input"}
+[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_cache/mcp_4b2f...a91c.png", "subfolder": "mcp_cache", "type": "input"}
 ```
 
 代理请求以 `[MCP Proxy]` 为前缀：

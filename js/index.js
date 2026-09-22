@@ -3,7 +3,7 @@ import { app } from '../../../scripts/app.js';
 import { t } from './core/i18n.js';
 import { RUNTIME_SETTINGS } from './core/constants.js';
 import { syncRuntimeSetting } from './core/runtimeSettings.js';
-import { createTemplateSetting } from './ui/settingsControls.js';
+import { createTemplateSetting, createUploadCacheSetting } from './ui/settingsControls.js';
 
 app.registerExtension({
     name: 'ComfyUI.MCPServer',
@@ -14,6 +14,12 @@ app.registerExtension({
             name: t('templatesSetting'),
             tooltip: t('templatesTooltip'),
             type: () => createTemplateSetting(),
+        },
+        {
+            id: 'MCPServer.uploads.clearCache',
+            name: t('clearUploadCacheSetting'),
+            tooltip: t('uploadCacheTooltip'),
+            type: () => createUploadCacheSetting(),
         },
         // Runtime settings (auto-synced to backend via onChange)
         ...RUNTIME_SETTINGS.map((s) => ({

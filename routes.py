@@ -3,13 +3,16 @@
 import asyncio
 import json
 import logging
+from pathlib import Path
+import shutil
 import zipfile
 from io import BytesIO
+
 import httpx
 from aiohttp import web
 from server import PromptServer
 
-from .comfyui_client import ComfyUIClient
+from .comfyui_client import ComfyUIClient, MCP_UPLOAD_SUBFOLDER
 from . import config, template_manager
 from .template_tokens import template_token_store
 
@@ -46,6 +49,40 @@ def _comfyui_client() -> ComfyUIClient:
     return ComfyUIClient(
         base_url=config.get_comfyui_api_url(),
         headers=config.get_comfyui_headers(),
+    )
+
+
+def _mcp_upload_cache_dir() -> Path:
+    """Return the dedicated ComfyUI input directory for MCP uploads."""
+    import folder_paths
+
+    return Path(folder_paths.get_input_directory()) / MCP_UPLOAD_SUBFOLDER
+
+
+@PromptServer.instance.routes.post(f"{API_PREFIX}/upload-cache/clear")
+async def clear_upload_cache(request):
+    """Delete files created in the dedicated MCP upload cache."""
+    cache_dir = _mcp_upload_cache_dir()
+    deleted = 0
+    failed = []
+    if cache_dir.exists():
+        for path in cache_dir.iterdir():
+            try:
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+                    deleted += 1
+                elif path.is_dir():
+                    shutil.rmtree(path)
+                    deleted += 1
+            except OSError as exc:
+                failed.append({"path": str(path), "error": str(exc)})
+    return web.json_response(
+        {
+            "cache_dir": str(cache_dir),
+            "deleted": deleted,
+            "failed": failed,
+        },
+        status=207 if failed else 200,
     )
 
 

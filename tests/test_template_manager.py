@@ -1,4 +1,7 @@
+import base64
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -28,6 +31,37 @@ class OutputRefTests(unittest.TestCase):
     def test_bad_index_rejected(self) -> None:
         with self.assertRaises(ValueError):
             tm._parse_output_ref("result://abc/out/xyz", "result")
+
+
+class ExternalImageRefTests(unittest.IsolatedAsyncioTestCase):
+    async def test_read_base64_image_source(self) -> None:
+        source = "data:image/png;base64," + base64.b64encode(b"png-bytes").decode()
+        filename, image_bytes = await tm.read_image_source(source)
+        self.assertEqual(filename, "upload.png")
+        self.assertEqual(image_bytes, b"png-bytes")
+
+    async def test_read_file_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.png"
+            path.write_bytes(b"image")
+            filename, image_bytes = await tm.read_image_source(path.as_uri())
+        self.assertEqual(filename, "input.png")
+        self.assertEqual(image_bytes, b"image")
+
+    async def test_external_ref_is_uploaded(self) -> None:
+        client = SimpleNamespace(upload_image_bytes=AsyncMock(return_value={"name": "mcp_input.png"}))
+        with patch.object(tm, "_comfyui_client", return_value=client):
+            value = await tm._substitute_string("before @{data:image/png;base64,aW1hZ2U=} after")
+        self.assertEqual(value, "before mcp_input.png after")
+        client.upload_image_bytes.assert_awaited_once()
+
+    async def test_nested_duplicate_refs_are_uploaded_once(self) -> None:
+        client = SimpleNamespace(upload_image_bytes=AsyncMock(return_value={"name": "mcp_input.png"}))
+        source = "data:image/png;base64,aW1hZ2U="
+        with patch.object(tm, "_comfyui_client", return_value=client):
+            value = await tm._apply_inline_refs({"a": f"@{{{source}}}", "b": f"@{{{source}}}"})
+        self.assertEqual(value, {"a": "mcp_input.png", "b": "mcp_input.png"})
+        client.upload_image_bytes.assert_awaited_once()
 
 
 class TemplateFilenameTests(unittest.TestCase):

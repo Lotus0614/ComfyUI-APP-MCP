@@ -137,6 +137,9 @@
 
 `params` 里的任意字符串值都可用 `@{<ref>}` 内联嵌入引用，其中 `<ref>` 是上游输出 `ref` 字段里返回的完整字符串：`run_template` 用 `result://...`，`run_templates` 内部用 `step://...`。
 
+图片输入还可以直接引用本地路径、`file://` URI、HTTP(S) URL 或 Base64 data URL，例如
+`{"image": "@{/tmp/input.png}"}`。服务会自动上传并替换成 ComfyUI 文件名。
+
 - **文字输出**会原样替换，可自由拼接：`{"prompt": "说明: @{result://abc-123/描述/0}. 风格: 动漫"}`
 - **图片/GIF 输出**解析为上传后的文件名，应作为图片输入的整值：`{"image": "@{result://abc-123/输出图片/0}"}`
 
@@ -153,7 +156,8 @@ result2 = run_template(
 )
 ```
 
-`upload_image()` 只用于用户提供的新图片，不用于模板生成的图片。
+`upload_image()` 仅保留给需要独立上传结果的调用或旧客户端兼容；模板参数不需要先调用它，
+直接传入图片 ref 即可。模板生成的图片更不能下载后再次上传。
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
@@ -261,7 +265,14 @@ result2 = run_template(
 - HTTP URL：`https://example.com/image.png`
 - Base64：`data:image/png;base64,iVBOR...`
 
-上传时会保留原扩展名并生成唯一文件名，例如 `mcp_4b2f...a91c.png`，避免同名文件互相覆盖。返回的 `name` 可直接填入模板参数。
+上传时会保留原扩展名并生成唯一文件名，例如 `mcp_cache/mcp_4b2f...a91c.png`，
+所有文件都放在 ComfyUI 的 `input/mcp_cache` 目录中，避免散落在 input 根目录。返回的 `name` 可直接填入模板参数。
+
+模板参数也可以直接使用图片 ref，推荐写成 `@{<来源>}`，例如
+`@{/tmp/input.png}`、`@{https://example.com/input.png}` 或
+`@{data:image/png;base64,iVBOR...}`。模板生成的图片应使用输出中的
+`@{result://...}` 或 `@{step://...}` ref。`upload_image` 保留用于兼容旧客户端，
+每次返回都会提示优先使用 ref。
 
 ## `list_models(folder="", keywords="")`
 
@@ -269,7 +280,8 @@ result2 = run_template(
 
 - 不传 `folder`：返回可查询的模型目录。
 - 传 `folder`：返回该目录下的模型文件，例如 `checkpoints`、`loras`、`vae`、`controlnet`。
-- `keywords`：可选搜索关键词，大小写不敏感，多个关键词为空格分隔的 AND 条件。
+- `keywords`：可选搜索表达式，大小写不敏感。空格或 `&` 表示 AND，`|` 表示 OR，
+  `&` 优先于 `|`；例如 `foo&bar|baz` 表示 `(foo AND bar) OR baz`。
 
 ## `get_template_result(name, run_id, wait=false, timeout=300)`
 

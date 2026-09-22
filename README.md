@@ -87,8 +87,8 @@ http://127.0.0.1:8189/mcp
 | `read_template_doc(name, title)` | 读取模板的扩展说明               | `description` 提到更多文档时使用     |
 | `run_template()`                 | 执行单个模板                     | 文生图、图生图、放大、加密等单步任务 |
 | `run_templates()`                | 一次运行多个任务并返回每一步结果 | 批量生成，或生成 → 放大等多步处理    |
-| `upload_image(source)`           | 上传用户提供的新图片             | 图片来自用户本地、URL 或 base64 时   |
-| `list_models(folder, keywords)`  | 查询模型目录                     | 需要选择 checkpoint、LoRA、VAE 时    |
+| `upload_image(source)`           | 上传用户提供的新图片（兼容接口） | 图片来自用户本地、URL 或 base64 时；模板参数优先使用 `@{ref}` |
+| `list_models(folder, keywords)`  | 查询模型目录                     | 需要选择 checkpoint、LoRA、VAE 时；支持空格/`&` AND、`|` OR |
 | `get_template_result()`          | 查询或继续等待结果               | `run_template` 超时或异步等待时      |
 
 完整参数、返回结构和示例见 [工具参考](./docs/zh/tools.md)。

@@ -84,6 +84,17 @@ const I18N = {
         maxConcurrencySetting: 'Max Concurrent Runs',
         maxConcurrencyTooltip:
             'Max tasks allowed in the ComfyUI queue (running + pending) before run_template is rejected. -1 = unlimited.',
+        clearUploadCacheSetting: 'Clear MCP Upload Cache',
+        uploadCacheTooltip:
+            'Uploaded images are stored in the ComfyUI input/mcp_cache directory. This clears all files in that dedicated cache.',
+        clearUploadCache: 'Clear All Uploaded Images',
+        clearUploadCacheConfirm:
+            'Delete all files in the ComfyUI input/mcp_cache directory?',
+        clearingUploadCache: 'Clearing upload cache...',
+        clearUploadCacheComplete:
+            'Deleted {deleted} item(s). Cache directory: {directory}',
+        clearUploadCacheFailed: 'Could not delete {count} item(s).',
+        clearUploadCacheError: 'Clear failed: {message}',
     },
     zh: {
         refresh: '刷新',
@@ -163,6 +174,17 @@ const I18N = {
         maxConcurrencySetting: '最大同时运行数量',
         maxConcurrencyTooltip:
             '允许同时在 ComfyUI 队列中（运行中 + 排队中）的最大任务数，超过则 run_template 立即返回错误。-1 表示不限制。',
+        clearUploadCacheSetting: '清除 MCP 上传图片缓存',
+        uploadCacheTooltip:
+            '上传的图片保存在 ComfyUI/input/mcp_cache 目录。此操作会清除该专用缓存目录中的所有文件。',
+        clearUploadCache: '一键清除所有上传图片',
+        clearUploadCacheConfirm:
+            '确定要删除 ComfyUI/input/mcp_cache 目录中的所有文件吗？',
+        clearingUploadCache: '正在清除上传图片缓存...',
+        clearUploadCacheComplete:
+            '已删除 {deleted} 个项目。缓存目录：{directory}',
+        clearUploadCacheFailed: '有 {count} 个项目删除失败。',
+        clearUploadCacheError: '清除失败：{message}',
     },
 };
 

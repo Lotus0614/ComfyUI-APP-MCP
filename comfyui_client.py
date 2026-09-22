@@ -14,6 +14,7 @@ import httpx
 # (the result poller alone makes one request per second).
 _pooled_clients: dict[int, httpx.AsyncClient] = {}
 _POOL_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+MCP_UPLOAD_SUBFOLDER = "mcp_cache"
 
 
 def _shared_client() -> httpx.AsyncClient:
@@ -165,7 +166,7 @@ class ComfyUIClient:
             f"{self.base_url}/upload/image",
             headers=self.headers,
             files={"image": (upload_name, image_bytes)},
-            data={"overwrite": "false"},
+            data={"overwrite": "false", "subfolder": MCP_UPLOAD_SUBFOLDER},
             timeout=120,
         )
         if resp.status_code != 200:
@@ -174,7 +175,17 @@ class ComfyUIClient:
             except Exception:
                 details = resp.text
             raise RuntimeError(f"Upload failed ({resp.status_code}): {details}")
-        return resp.json()
+        result = resp.json()
+        if isinstance(result, dict):
+            # ComfyUI returns the filename and subfolder separately, while
+            # LoadImage-style inputs expect the combined relative path.
+            name = str(result.get("name", "") or "")
+            subfolder = str(result.get("subfolder", "") or MCP_UPLOAD_SUBFOLDER).strip("/")
+            if name and subfolder and not name.startswith(f"{subfolder}/"):
+                result["name"] = f"{subfolder}/{name.lstrip('/')}"
+            result["subfolder"] = subfolder
+            result["mcp_cache_dir"] = MCP_UPLOAD_SUBFOLDER
+        return result
 
     # ── System ──────────────────────────────────────────────
 

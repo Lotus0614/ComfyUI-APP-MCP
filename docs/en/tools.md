@@ -137,6 +137,10 @@ A timeout does not mean the generation failed. Continue waiting with `get_templa
 
 Any string value in `params` may embed a reference inline as `@{<ref>}`, where `<ref>` is the exact `result://...` (from `run_template`) or `step://...` (from `run_templates`) string returned in a prior output's `ref` field.
 
+Image inputs may also directly reference a local path, `file://` URI, HTTP(S) URL, or
+Base64 data URL, for example `{"image": "@{/tmp/input.png}"}`. The server uploads
+the source automatically and substitutes the ComfyUI filename.
+
 - **Text outputs** are substituted as-is, enabling free concatenation: `{"prompt": "Caption: @{result://abc-123/caption/0}. Style: anime"}`
 - **Image/GIF outputs** resolve to an uploaded filename and should be used as the whole value of an image input: `{"image": "@{result://abc-123/output_image/0}"}`
 
@@ -153,7 +157,9 @@ result2 = run_template(
 )
 ```
 
-`upload_image()` is only for new images provided by the user, not template-generated images.
+`upload_image()` is retained for standalone upload results and legacy clients. It is not
+needed before passing an image ref to a template, and template-generated images should
+never be downloaded and uploaded again.
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
@@ -261,7 +267,16 @@ Supported sources:
 - HTTP URL: `https://example.com/image.png`
 - Base64: `data:image/png;base64,iVBOR...`
 
-The upload preserves the original extension and generates a unique filename such as `mcp_4b2f...a91c.png`, so identical source names do not overwrite each other. The returned `name` can be used as a template parameter.
+The upload preserves the original extension and generates a unique path such as
+`mcp_cache/mcp_4b2f...a91c.png`. All files are stored under ComfyUI's
+`input/mcp_cache` directory instead of the input root, and the returned `name` can
+be used as a template parameter.
+
+Image parameters can also use a direct image ref such as `@{/tmp/input.png}`,
+`@{https://example.com/input.png}`, or `@{data:image/png;base64,iVBOR...}`.
+For template-generated images, prefer the returned `@{result://...}` or
+`@{step://...}` ref. `upload_image` remains for backward compatibility and now
+returns a message recommending refs on every call.
 
 ## `list_models(folder="", keywords="")`
 
@@ -269,7 +284,9 @@ Queries ComfyUI model folders or model files.
 
 - Without `folder`: returns queryable model folders.
 - With `folder`: returns files in that folder, such as `checkpoints`, `loras`, `vae`, or `controlnet`.
-- `keywords`: optional case-insensitive AND search. Separate multiple keywords with spaces.
+- `keywords`: optional case-insensitive search expression. Spaces or `&` mean AND,
+  `|` means OR, and `&` has higher precedence than `|`; for example,
+  `foo&bar|baz` means `(foo AND bar) OR baz`.
 
 ## `get_template_result(name, run_id, wait=false, timeout=300)`
 

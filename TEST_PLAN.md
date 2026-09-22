@@ -98,6 +98,8 @@
 **验证点：**
 - [ ] 返回 `{"folder": "checkpoints", "models": [...]}`
 - [ ] models 列表不为空
+- [ ] `keywords="foo bar"` 与 `keywords="foo&bar"` 表示 AND
+- [ ] `keywords="foo|bar"` 表示 OR，`&` 优先于 `|`
 
 ---
 
@@ -393,6 +395,13 @@
 ---
 
 ## 六、upload_image
+
+模板图片参数也应覆盖直接图片 ref：
+
+- [ ] `@{本地路径}`、`@{file://...}` 可以直接作为图片参数
+- [ ] `@{https://...}` 可以直接作为图片参数
+- [ ] `@{data:image/...;base64,...}` 可以直接作为图片参数
+- [ ] `upload_image` 成功和失败响应都包含推荐使用 `ref` 的提示消息
 
 ### 6.1 上传本地文件
 

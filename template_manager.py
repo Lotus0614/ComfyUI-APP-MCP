@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
 import copy
 import hashlib
 import json
 import logging
-import secrets
 import re
+import secrets
 import time
+from pathlib import Path
 from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.request import url2pathname
 
 import httpx
 
@@ -111,6 +114,75 @@ def _comfyui_client() -> ComfyUIClient:
         base_url=config.get_comfyui_api_url(),
         headers=config.get_comfyui_headers(),
     )
+
+
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".avif"}
+
+
+def _image_filename_from_data_url(header: str) -> str:
+    mime = header.split(";", 1)[0].lower()
+    extension = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "image/bmp": "bmp",
+        "image/tiff": "tiff",
+        "image/avif": "avif",
+    }.get(mime, "png")
+    return f"upload.{extension}"
+
+
+async def read_image_source(source: str) -> tuple[str, bytes]:
+    """Read an image from a local path, URL, file URI, or base64 data URL."""
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("Image source must be a non-empty string")
+    source = source.strip()
+
+    if source.startswith("data:"):
+        try:
+            header, data = source.split(",", 1)
+        except ValueError as exc:
+            raise ValueError("Invalid image data URL") from exc
+        if ";base64" not in header.lower():
+            raise ValueError("Image data URL must use base64 encoding")
+        try:
+            image_bytes = base64.b64decode(data, validate=True)
+        except Exception as exc:
+            raise ValueError("Invalid base64 image data") from exc
+        if not image_bytes:
+            raise ValueError("Image data URL is empty")
+        return _image_filename_from_data_url(header), image_bytes
+
+    if source.startswith(("http://", "https://")):
+        async with httpx.AsyncClient(follow_redirects=True) as http_client:
+            response = await http_client.get(source, timeout=30)
+            response.raise_for_status()
+        path = urlparse(source).path
+        filename = Path(path).name or "image.png"
+        if "." not in filename:
+            filename += ".png"
+        return filename, response.content
+
+    if source.startswith("file://"):
+        parsed = urlparse(source)
+        source = url2pathname(unquote(parsed.path))
+        if parsed.netloc and parsed.netloc not in ("", "localhost"):
+            source = f"//{parsed.netloc}{source}"
+
+    filepath = Path(source)
+    if not filepath.exists():
+        raise FileNotFoundError(f"File not found: {source}")
+    if not filepath.is_file():
+        raise ValueError(f"Image source is not a file: {source}")
+    return filepath.name, filepath.read_bytes()
+
+
+async def upload_image_source(source: str, client: ComfyUIClient | None = None) -> dict:
+    """Read and upload an image source to ComfyUI."""
+    filename, image_bytes = await read_image_source(source)
+    uploader = client or _comfyui_client()
+    return await uploader.upload_image_bytes(filename, image_bytes)
 
 
 async def _get_node_definitions(force: bool = False) -> dict:
@@ -1376,6 +1448,10 @@ async def _resolve_inline_ref(ref: str, step_results: dict | None = None):
             raise ValueError(f"Step '{source_step}' is unavailable for reference")
         return await _resolve_output_value(step_results[source_step], output_name, index)
 
+    if _looks_like_external_image_source(ref):
+        upload_result = await upload_image_source(ref)
+        return upload_result.get("name", "")
+
     prompt_id, output_name, index = _parse_output_ref(ref, "result")
     outputs = _mcp_outputs_cache.get(prompt_id)
     if not isinstance(outputs, dict):
@@ -1395,22 +1471,45 @@ async def _resolve_inline_ref(ref: str, step_results: dict | None = None):
 
 # Inline @{ref} markers embedded in parameter string values, e.g.
 #   "Caption: @{step://caption/描述/0}. 风格: 动漫"
+# External image sources are also accepted, such as @{https://...},
+# @{file:///tmp/input.png}, @{/tmp/input.png}, and @{data:image/png;base64,...}.
 # Refs are URL-encoded by _build_output_ref, so they never contain `}`.
-_INLINE_REF_RE = re.compile(r"@\{(?P<ref>(?:result|step)://[^}]*)\}")
+_INLINE_REF_RE = re.compile(r"@\{(?P<ref>[^{}]+)\}")
 
 
-async def _substitute_string(s: str, step_results: dict | None = None) -> str:
+def _looks_like_external_image_source(ref: str) -> bool:
+    """Return whether *ref* has a supported external image-source shape."""
+    value = ref.strip()
+    lower = value.lower()
+    if lower.startswith(("http://", "https://", "file://", "data:image/")):
+        return True
+    if re.match(r"^[a-zA-Z]:[\\/]", value) or value.startswith(("/", "\\", "./", "../")):
+        return True
+    return Path(value).suffix.lower() in _IMAGE_EXTENSIONS or Path(value).is_file()
+
+
+def _is_resolvable_ref(ref: str) -> bool:
+    """Return whether a marker is a result, step, or external image ref."""
+    return ref.startswith(("result://", "step://")) or _looks_like_external_image_source(ref)
+
+
+async def _substitute_string(
+    s: str,
+    step_results: dict | None = None,
+    resolved: dict[str, str] | None = None,
+) -> str:
     """Replace every ``@{ref}`` occurrence in *s* with its resolved value.
 
     Returns *s* unchanged when it contains no inline refs. Resolutions run
     concurrently; each distinct ref is resolved once per call (memoized) so the
     same image is not re-downloaded/re-uploaded multiple times.
     """
-    matches = list(_INLINE_REF_RE.finditer(s))
+    matches = [m for m in _INLINE_REF_RE.finditer(s) if _is_resolvable_ref(m.group("ref"))]
     if not matches:
         return s
 
-    resolved: dict[str, str] = {}
+    if resolved is None:
+        resolved = {}
     pending: list[str] = []
     for m in matches:
         ref = m.group("ref")
@@ -1432,20 +1531,29 @@ async def _substitute_string(s: str, step_results: dict | None = None) -> str:
     return "".join(out)
 
 
-async def _apply_inline_refs(value, step_results: dict | None = None):
+async def _apply_inline_refs(
+    value,
+    step_results: dict | None = None,
+    resolved: dict[str, str] | None = None,
+):
     """Recursively resolve ``@{ref}`` markers inside parameter values.
 
     Strings are substituted; lists/tuples and dict values are walked; every
     other type (int/float/bool/None/…) is returned unchanged.
     """
+    if resolved is None:
+        resolved = {}
     if isinstance(value, str):
-        return await _substitute_string(value, step_results)
+        return await _substitute_string(value, step_results, resolved)
     if isinstance(value, list):
-        return [await _apply_inline_refs(v, step_results) for v in value]
+        return [await _apply_inline_refs(v, step_results, resolved) for v in value]
     if isinstance(value, tuple):
-        return tuple(await _apply_inline_refs(v, step_results) for v in value)
+        return tuple(await _apply_inline_refs(v, step_results, resolved) for v in value)
     if isinstance(value, dict):
-        return {k: await _apply_inline_refs(v, step_results) for k, v in value.items()}
+        return {
+            k: await _apply_inline_refs(v, step_results, resolved)
+            for k, v in value.items()
+        }
     return value
 
 
@@ -1975,14 +2083,14 @@ async def execute_template(
     # Inline @{ref} substitution — resolve references embedded inside string
     # parameter values (e.g. "Caption: @{step://caption/描述/0}"). Supports both
     # result:// (cache/history) and step:// (step_results, passed by run_templates).
-    if step_results is not None or any(isinstance(v, str) and "@{" in v for v in params.values()):
-        new_params = {}
-        for k, v in params.items():
-            try:
-                new_params[k] = await _apply_inline_refs(v, step_results)
-            except Exception as e:
-                return {"error": f"Failed to resolve inline reference in '{k}': {e}"}
-        params = new_params
+    new_params = {}
+    resolved_refs: dict[str, str] = {}
+    for k, v in params.items():
+        try:
+            new_params[k] = await _apply_inline_refs(v, step_results, resolved_refs)
+        except Exception as e:
+            return {"error": f"Failed to resolve inline reference in '{k}': {e}"}
+    params = new_params
 
     params, param_error = _validate_and_coerce_params(inputs, params)
     if param_error:

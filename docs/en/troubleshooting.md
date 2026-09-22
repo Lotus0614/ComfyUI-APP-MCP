@@ -9,7 +9,7 @@ MCP calls are printed in the ComfyUI console with the `[MCP]` prefix:
 ```text
 [MCP] list_templates() → 3 templates
 [MCP] run_template(name='txt2img', params={"positive_prompt": "a cat"}) → completed
-[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_4b2f...a91c.png", "subfolder": "", "type": "input"}
+[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_cache/mcp_4b2f...a91c.png", "subfolder": "mcp_cache", "type": "input"}
 ```
 
 Proxy requests use the `[MCP Proxy]` prefix:
