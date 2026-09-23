@@ -9,7 +9,7 @@ MCP 调用会在 ComfyUI 控制台打印，以 `[MCP]` 为前缀：
 ```text
 [MCP] list_templates() → 3 templates
 [MCP] run_template(name='txt2img', params={"positive_prompt": "a cat"}) → completed
-[MCP] upload_image(source=E:/photos/input.png) → {"name": "mcp_cache/mcp_4b2f...a91c.png", "subfolder": "mcp_cache", "type": "input"}
+[MCP] upload_image(source=E:/photos/input.png) → {"image": "mcp_cache/mcp_4b2f...a91c.png", "tip": "..."}
 ```
 
 代理请求以 `[MCP Proxy]` 为前缀：
@@ -72,8 +72,9 @@ COMFYUI_URL=http://<ComfyUI 主机>:<端口>
 
 判断图片来源：
 
-- 用户提供的新图片：调用 `upload_image()`，把返回的 `name` 填入模板参数。
-- 模板生成的图片：不要手动上传，交给 AI 使用模板串联能力处理。
+- 用户提供的新图片：优先在模板参数中直接使用 `@{本地路径}`、`@{URL}` 或 `@{Base64}`。
+- 只有需要独立上传结果或兼容旧客户端时才调用 `upload_image()`，使用返回的 `image` 字段。
+- 模板生成的图片：使用返回的 `@{result://...}` 或 `@{step://...}`，不要手动下载再上传。
 
 ## 接入 AstrBot 等平台后图片发不出来
 

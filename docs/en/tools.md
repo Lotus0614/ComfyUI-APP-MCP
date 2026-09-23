@@ -163,7 +163,7 @@ never be downloaded and uploaded again.
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
-Runs multiple tasks sequentially in one call and returns every step's complete result. Steps may be independent; embed an earlier output's `ref` inline (`@{step://...}`) only when a later task depends on it.
+Runs multiple tasks sequentially in one call and returns every step's complete result. Use it for independent batch jobs (including running one template multiple times with different params) or for dependent pipelines. Add a `step://` ref only when a later task needs an earlier output.
 
 Multiple independent tasks:
 
@@ -267,16 +267,30 @@ Supported sources:
 - HTTP URL: `https://example.com/image.png`
 - Base64: `data:image/png;base64,iVBOR...`
 
-The upload preserves the original extension and generates a unique path such as
-`mcp_cache/mcp_4b2f...a91c.png`. All files are stored under ComfyUI's
-`input/mcp_cache` directory instead of the input root, and the returned `name` can
-be used as a template parameter.
+The upload preserves the original extension and stores the unique file under
+ComfyUI's `input/mcp_cache` directory. The compact success response contains only
+the template-ready path and guidance:
 
-Image parameters can also use a direct image ref such as `@{/tmp/input.png}`,
-`@{https://example.com/input.png}`, or `@{data:image/png;base64,iVBOR...}`.
-For template-generated images, prefer the returned `@{result://...}` or
-`@{step://...}` ref. `upload_image` remains for backward compatibility and now
-returns a message recommending refs on every call.
+```json
+{
+  "image": "mcp_cache/mcp_4b2f...a91c.png",
+  "tip": "..."
+}
+```
+
+`image` can be passed directly as a template image input. The tip documents these
+ref forms:
+
+- Local: `{"image": "@{C:/images/input.png}"}`
+- `file://`: `{"image": "@{file:///C:/images/input.png}"}`
+- Remote: `{"image": "@{https://example.com/input.png}"}`
+- Base64: `{"image": "@{data:image/png;base64,...}"}`
+- Previous `run_template` output: `@{result://<run-id>/<output>/0}`
+- Previous `run_templates` step: `@{step://<step-id>/<output>/0}`
+
+You normally do not need to call `upload_image` before a template; pass the image
+ref directly.
+
 
 ## `list_models(folder="", keywords="")`
 

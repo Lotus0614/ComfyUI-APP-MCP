@@ -17,10 +17,24 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-_UPLOAD_IMAGE_MESSAGE = (
-    "图片已上传到 ComfyUI/input/mcp_cache。模板图片参数优先直接使用图片 ref；模板生成的图片请使用输出中的 @{result://...} 或 "
-    "@{step://...} ref，不要下载后再次调用 upload_image；upload_image 仅用于用户提供的新图片。"
+_UPLOAD_IMAGE_TIP = (
+    "优先直接在模板 params 中使用图片 ref，不必先调用 upload_image。"
+    "新本地图片：{\"image\": \"@{C:/images/input.png}\"}；"
+    "file URI：{\"image\": \"@{file:///C:/images/input.png}\"}；"
+    "远程图片：{\"image\": \"@{https://example.com/input.png}\"}；"
+    "Base64：{\"image\": \"@{data:image/png;base64,...}\"}；"
+    "模板结果：run_template 用 @{result://<run-id>/<output>/0}，"
+    "run_templates 用 @{step://<step-id>/<output>/0}。"
+    "直接图片 ref 会自动缓存到 input/mcp_cache。"
 )
+
+
+def _format_upload_result(result: dict) -> dict:
+    """Expose only the path accepted by template image inputs plus guidance."""
+    image = str(result.get("name", "") or "")
+    if not image:
+        raise ValueError("ComfyUI upload response did not include an image path")
+    return {"image": image, "tip": _UPLOAD_IMAGE_TIP}
 
 
 def _filter_models(models: list[str], keywords: str) -> list[str]:
@@ -69,18 +83,16 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
     mcp = FastMCP(
         name="ComfyUI MCP Server",
         instructions=(
-            "Execute ComfyUI templates for image generation, processing, and more. "
-            "Use list_templates to discover templates, get_template for parameters, "
-            "then run_template for one task or run_templates for multiple tasks in one call. "
-            "If get_template returns template_token_required=true, pass its template_token "
-            "to every execution of that template. "
-            "run_templates steps may be independent or connected through inline references. "
-            "Template outputs include `ref` values. "
-            "When chaining templates, embed a ref inline in a parameter value as `@{<ref>}`. "
-            "For any template image input, prefer direct refs such as `@{<local-path>}`, `@{<https-url>}`, "
-            "or `@{<data-url>}`; these are cached under input/mcp_cache. Template outputs use "
-            "`@{result://...}` or `@{step://...}` refs. NEVER use upload_image for template inputs "
-            "when a direct ref can be used."
+            "ComfyUI template workflow: first call list_templates, then get_template, then run_template "
+            "or run_templates. Use run_templates for independent batch jobs as well as dependent pipelines. "
+            "Use the exact input names and types returned by get_template. "
+            "If template_token_required=true, pass the fresh template_token to execution. "
+            "Every execution output includes a ref for reuse. For text, refs may be embedded in a larger "
+            "string. For image inputs, prefer a direct image ref: @{local-path}, @{file://...}, @{https://...}, "
+            "or @{data:image/...;base64,...} for a new image; use @{result://...} for a previous run and "
+            "@{step://...} for an earlier run_templates step. Direct image refs are uploaded automatically "
+            "to input/mcp_cache. Do not call upload_image before a template unless a standalone upload result "
+            "is explicitly required."
         ),
         stateless_http=True,
         transport_security=_TRANSPORT_SECURITY,
@@ -90,7 +102,11 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def list_templates() -> str:
-        """List all available templates. Templates are workflows with typed inputs/outputs."""
+        """Discover enabled ComfyUI templates.
+
+        Call this first to choose a capability. The result is a lightweight list of
+        template names and titles; call get_template before execution.
+        """
         logger.info("[MCP] list_templates()")
         try:
             templates = template_manager.list_public_templates()
@@ -103,7 +119,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def get_template(name: str) -> str:
-        """Get template details: description, inputs, outputs, and readable docs.
+        """Return one template's inputs, outputs, docs and optional execution token.
 
         Args:
             name: Template name.
@@ -126,11 +142,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def read_template_doc(name: str, title: str) -> str:
-        """Read a named documentation section from a template.
-
-        Use this for progressive disclosure: keep get_template concise, then fetch
-        extra sections such as "usage", "examples", "tips", or "negative_prompt"
-        only when needed.
+        """Read one optional documentation section named by get_template.
 
         Args:
             name: Template name.
@@ -148,10 +160,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def update_template_doc(name: str, title: str, content: str, mode: str = "replace") -> str:
-        """Update a documentation section in a template.
-
-        Updates the MarkdownNote node in the original workflow and syncs the
-        top-level template fields (title/description) when applicable.
+        """Update stored template documentation; requires the settings toggle.
 
         Args:
             name: Template name.
@@ -173,22 +182,15 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def upload_image(source: str) -> str:
-        """Upload an image to ComfyUI (legacy/compatibility tool).
+        """Upload a new image and return the path accepted by template image inputs.
 
-        IMPORTANT: For a template image input, prefer a direct image ref in
-        ``run_template`` or ``run_templates`` instead of calling this tool first.
-        Direct refs support local paths, ``file://`` URIs, HTTP(S) URLs, and base64
-        data URLs, for example ``"@{C:/images/input.png}"`` or
-        ``"@{https://example.com/input.png}"``. The server uploads the source to
-        ComfyUI's ``input/mcp_cache`` directory and automatically passes the full
-        ``mcp_cache/<filename>`` path to the workflow.
+        Prefer direct image refs in template params instead of calling this tool:
+        ``@{C:/images/input.png}``, ``@{file:///C:/images/input.png}``,
+        ``@{https://example.com/input.png}``, or ``@{data:image/png;base64,...}``.
+        Images generated by templates must use their returned ``result://`` or
+        ``step://`` ref and must not be downloaded and uploaded again.
 
-        For images generated by a previous template, use its returned ``ref``
-        directly (``@{result://...}`` for a completed run or ``@{step://...}``
-        inside ``run_templates``). Do not download and re-upload generated images.
-        Use this tool only when a caller explicitly needs a standalone upload result
-        or for compatibility with an existing client. The response always includes
-        a message recommending the ref-based workflow.
+        The compact success response is ``{"image": "mcp_cache/<filename>", "tip": "..."}``.
 
         Args:
             source: New image source. Can be:
@@ -199,22 +201,25 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         logger.info(f"[MCP] upload_image(source={source[:80]}...)")
         try:
             result = await template_manager.upload_image_source(source, client=client)
-            result["message"] = _UPLOAD_IMAGE_MESSAGE
-            logger.info(f"[MCP] upload_image → {result}")
-            return _json(result)
+            formatted = _format_upload_result(result)
+            logger.info(f"[MCP] upload_image → {formatted}")
+            return _json(formatted)
         except Exception as e:
             logger.error(f"[MCP] upload_image error: {e}")
-            return _json({"error": str(e), "message": _UPLOAD_IMAGE_MESSAGE})
+            return _json({"error": str(e), "tip": _UPLOAD_IMAGE_TIP})
 
     @mcp.tool()
     async def list_models(folder: str = "", keywords: str = "") -> str:
-        """List ComfyUI model folders or models in a specific folder.
+        """List model folders or search models in one folder.
+
+        Without folder, returns available folders. With folder, returns model
+        paths. Search is case-insensitive: spaces and ``&`` mean AND, ``|`` means
+        OR, and AND binds first; e.g. ``foo&bar|baz`` means ``(foo AND bar) OR baz``.
 
         Args:
             folder: Optional ComfyUI model folder name, e.g. "checkpoints", "loras",
                     "vae", "controlnet". If omitted, returns available model folders.
-            keywords: Optional search keywords to filter models (case-insensitive).
-                      Spaces and '&' mean AND; '|' means OR. '&' has higher precedence than '|'.
+            keywords: Optional case-insensitive search expression.
         """
         folder = folder.strip().strip("/")
         logger.info(f"[MCP] list_models(folder={folder!r}, keywords={keywords!r})")
@@ -241,23 +246,18 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         wait: bool = True,
         template_token: str | None = None,
     ) -> str:
-        """Execute a template with the given parameters.
+        """Execute one template with a JSON params string.
+
+        Use get_template for the parameter schema. Parameter strings may include
+        refs written as ``@{...}`` (for example ``@{result://...}``); set wait=false
+        to poll later.
 
         Args:
             name: Template name.
-            params: JSON string of parameter values, e.g. '{"输入文本": "hello"}'.
-                Any string value may embed references inline as `@{<ref>}`, where `<ref>` is the
-                exact `result://...` string from a prior result's `ref` field. External image
-                sources may also be referenced as `@{<local-path>}`, `@{<https-url>}`, or a
-                base64 data URL. Text outputs are
-                substituted as-is, enabling free concatenation, e.g.
-                '{"prompt": "Caption: @{result://abc-123/描述/0}. Style: anime"}'. Image/GIF refs
-                resolve to an uploaded filename and should be used as the whole value of an image
-                input, e.g. '{"image": "@{result://abc-123/图片/0"}'.
+            params: JSON object string containing template inputs.
             wait: If true (default), wait for execution to complete and return results directly.
                   If false, return immediately with run_id for later polling via get_template_result.
-            template_token: Token returned by get_template. Required only when template token
-                protection is enabled in MCP Server settings.
+            template_token: Token from get_template when token protection is enabled.
         """
         effective_timeout = config.get_run_template_timeout()
         logger.info(
@@ -285,38 +285,21 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def run_templates(pipeline: str, timeout_per_step: float | None = None) -> str:
-        """Run multiple tasks sequentially in one call.
+        """Run multiple template calls sequentially in one request.
 
-        Returns every step with the same full execution result shape as run_template,
-        plus the step id and template name. Steps may be independent, or later steps
-        may consume earlier outputs by embedding references inline.
-
-        Any string value in a step's `params` may embed references inline as `@{<ref>}`,
-        where `<ref>` is the exact `step://...` or `result://...` string from a prior
-        result's `ref` field. Local paths, URLs, and base64 image data may also be used as
-        external refs. Text outputs are substituted as-is (free concatenation),
-        e.g. '{"prompt": "Caption: @{step://caption/描述/0}. Style: anime"}'; image/GIF
-        refs resolve to an uploaded filename and should be used as the whole value of an
-        image input, e.g. '{"image": "@{step://generate/图片/0"}'.
+        Use this for either independent batch jobs (repeat one template with
+        different params) or dependent pipelines (later steps use earlier refs).
+        Each step's params may contain the same refs accepted by run_template.
 
         Args:
-            pipeline: JSON string describing the ordered tasks. Example:
-                {
-                  "steps": [
-                    {
-                      "id": "generate",
-                      "template": "txt2img",
-                      "template_token": "<token from get_template>",
-                      "params": {"prompt": "a cat"}
-                    },
-                    {
-                      "id": "upscale",
-                      "template": "upscale",
-                      "template_token": "<token from get_template>",
-                      "params": {"image": "@{step://generate/图片/0}", "scale": 2}
-                    }
-                  ]
-                }
+            pipeline: JSON string with a non-empty ``steps`` array. Each step has
+                ``id``, ``template`` and ``params``; add ``template_token`` when
+                required. Omit refs for independent batch steps; use ``step://``
+                refs when a step depends on an earlier step.
+                Example: ``{"steps":[{"id":"cat","template":"txt2img",
+                "params":{"prompt":"a cat"}},{"id":"dog","template":"txt2img",
+                "params":{"prompt":"a dog"}}]}`` runs one template twice independently.
+                A dependent step can use ``{"image":"@{step://cat/output/0}"}``.
             timeout_per_step: Max seconds to wait for each step.
                 Defaults to the Run Template Timeout setting.
         """
@@ -342,13 +325,16 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.tool()
     async def get_template_result(name: str, run_id: str, wait: bool = False, timeout: float | None = None) -> str:
-        """Fetch template execution result.
+        """Poll or continue waiting for one template run.
+
+        Use the run_id returned by run_template(wait=false) or a timed-out execution.
+        wait=false returns current status; wait=true waits up to timeout.
 
         Args:
             name: Template name.
             run_id: The run_id returned by run_template when wait=false.
-            wait: If true, poll until the execution completes or times out.
-            timeout: Max seconds to wait when wait=true. Defaults to the Run Template Timeout setting.
+            wait: Whether to continue polling until completion or timeout.
+            timeout: Maximum wait seconds when wait=true.
         """
         effective_timeout = timeout if timeout is not None else config.get_run_template_timeout()
         logger.info(f"[MCP] get_template_result(name={name!r}, run_id={run_id!r}, wait={wait}, timeout={effective_timeout})")
@@ -396,55 +382,26 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
 
     @mcp.prompt()
     def use_template() -> str:
-        """Guide the AI to use a ComfyUI template."""
+        """Provide a concise, end-to-end guide for the template tools."""
         return (
-            "## ComfyUI Templates\n\n"
-            "A **template** is a reusable ComfyUI workflow with typed inputs and auto-detected outputs. "
-            "Templates are created from ComfyUI workflows in the UI settings panel (Settings > MCP Server > Templates). "
-            "Each template wraps a workflow and exposes its configurable parameters as named inputs.\n\n"
-            "### How to Use\n"
-            "1. Call `list_templates()` to see all available templates with their names and titles.\n"
-            "2. Call `get_template('<name>')` to see the template's inputs, outputs, and readable doc titles.\n"
-            "   - If it returns `template_token_required=true`, preserve `template_token` and pass it to execution.\n"
-            "3. If you need extra docs, call `read_template_doc('<name>', '<title>')` for a specific documentation section.\n"
-            "4. Call `run_template('<name>', '{\"param\": \"value\"}')` to execute with your parameters.\n"
-            "   - When required, pass the exact `template_token` returned by the latest `get_template` call.\n"
-            "   - Parameters are passed as a JSON string, e.g. '{\"提示词\": \"a beautiful sunset\"}'.\n"
-            "   - By default, the call waits for completion and returns results directly.\n"
-            "   - Set `wait=false` to return immediately with a `run_id` for later polling.\n"
-            "   - Each output includes a ready-to-use `ref` for chaining.\n"
-            "5. Call `run_templates('{\"steps\": [...]}')` to run multiple tasks in one call. "
-            "Steps can be independent, or connected when one depends on another by embedding a prior output's `ref` inline.\n\n"
-            "### CRITICAL: Prefer Image Refs for Every Template Image Input\n\n"
-            "For a new local, remote, or base64 image, pass a direct `@{<ref>}` such as `@{<local-path>}`, "
-            "`@{<https-url>}`, or `@{<data-url>}`. For an image generated by a previous template (e.g., "
-            "upscale, encrypt, img2img, style transfer), use its returned `@{result://...}` or `@{step://...}` ref. "
-            "Direct image refs are automatically uploaded to `input/mcp_cache` and passed with the required "
-            "`mcp_cache/<filename>` path. **Do not call upload_image first unless a standalone upload result is explicitly needed.**\n\n"
-            "Each execution output includes a ready-to-use `ref`:\n"
-            "```json\n"
-            "{\n"
-            "  \"outputs\": {\n"
-            "    \"输出图片\": {\n"
-            "      \"type\": \"image\",\n"
-            "      \"url\": \"...\",\n"
-            "      \"ref\": \"result://<run-id>/输出图片/0\"\n"
-            "    }\n"
-            "  }\n"
-            "}\n"
-            "```\n\n"
-            "To chain templates, embed the output `ref` inline in the next call's parameter value:\n"
-            "```json\n"
-            "{\"输入图片\": \"@{result://<run-id>/输出图片/0}\"}\n"
-            "```\n\n"
-            "Inside `run_templates`, use `step://<step-id>/<output>/0` refs, e.g. `\"@{step://generate/图片/0}\"`.\n\n"
-            "`upload_image()` is retained for compatibility and standalone uploads; it is not needed before passing "
-            "a new local, remote, or base64 image to a template.\n\n"
-            "### Tips\n"
-            "- If a template's inputs have changed, ask the user to click 'Refresh' in the settings panel to re-extract from the workflow.\n"
-            "- Generation may take 10-120 seconds depending on the workflow and hardware.\n"
-            "- Use `run_templates` for batch tasks or multi-step workflows (multiple generations, generate → upscale, etc.).\n"
-            "- **Displaying images**: Use the output's `url` directly."
+            "## ComfyUI MCP workflow\n\n"
+            "1. Discover: call `list_templates()`.\n"
+            "2. Inspect: call `get_template(name)` and use its exact input names/types. "
+            "If a token is returned, pass the same `template_token` to execution.\n"
+            "3. Execute one task with `run_template(name, params)`, where `params` is a JSON string. "
+            "Use `wait=false` only when you want to poll later with `get_template_result`.\n"
+            "4. Execute an ordered pipeline with `run_templates`; use `step://` refs only for earlier steps.\n\n"
+            "### Reference rules\n\n"
+            "- Text refs (`result://` or `step://`) can be embedded in prose.\n"
+            "- Image inputs should normally be the complete value of the image parameter.\n"
+            "- New image: `@{C:/images/input.png}`, `@{file:///C:/images/input.png}`, "
+            "`@{https://example.com/input.png}`, or `@{data:image/png;base64,...}`.\n"
+            "- Previous standalone run: `@{result://<run-id>/<output>/0}`.\n"
+            "- Earlier pipeline step: `@{step://<step-id>/<output>/0}`.\n"
+            "- New image refs are uploaded automatically to `input/mcp_cache`; do not call upload_image first.\n"
+            "- `upload_image` is only for compatibility or when a standalone upload response is explicitly needed.\n\n"
+            "A successful output includes a ready-to-use `ref`. Pass that exact ref in the next template call; "
+            "never download a generated image and upload it again."
         )
 
     return mcp

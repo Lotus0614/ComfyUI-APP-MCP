@@ -161,7 +161,7 @@ result2 = run_template(
 
 ## `run_templates(pipeline, timeout_per_step=300)`
 
-一次调用中按顺序执行多个任务，并返回每一步的完整结果。步骤可以彼此独立；只有后续任务依赖前序输出时，才把前序输出的 `ref` 用 `@{step://...}` 内联嵌入。
+一次调用中按顺序执行多个任务，并返回每一步的完整结果。它既适合批量调用（同一个模板使用不同参数运行多次），也适合有依赖的流水线。独立步骤不需要 ref；只有后续任务依赖前序输出时，才把前序输出的 `ref` 用 `@{step://...}` 内联嵌入。
 
 多个独立任务示例：
 
@@ -265,14 +265,27 @@ result2 = run_template(
 - HTTP URL：`https://example.com/image.png`
 - Base64：`data:image/png;base64,iVBOR...`
 
-上传时会保留原扩展名并生成唯一文件名，例如 `mcp_cache/mcp_4b2f...a91c.png`，
-所有文件都放在 ComfyUI 的 `input/mcp_cache` 目录中，避免散落在 input 根目录。返回的 `name` 可直接填入模板参数。
+上传时会保留原扩展名并生成唯一文件名，文件保存在 ComfyUI 的
+`input/mcp_cache` 目录中。成功响应只有模板入参需要的路径和提示：
 
-模板参数也可以直接使用图片 ref，推荐写成 `@{<来源>}`，例如
-`@{/tmp/input.png}`、`@{https://example.com/input.png}` 或
-`@{data:image/png;base64,iVBOR...}`。模板生成的图片应使用输出中的
-`@{result://...}` 或 `@{step://...}` ref。`upload_image` 保留用于兼容旧客户端，
-每次返回都会提示优先使用 ref。
+```json
+{
+  "image": "mcp_cache/mcp_4b2f...a91c.png",
+  "tip": "..."
+}
+```
+
+`image` 的值可直接作为模板图片参数。提示中的 ref 用法包括：
+
+- 本地：`{"image": "@{C:/images/input.png}"}`
+- `file://`：`{"image": "@{file:///C:/images/input.png}"}`
+- 远程：`{"image": "@{https://example.com/input.png}"}`
+- Base64：`{"image": "@{data:image/png;base64,...}"}`
+- 上一次 `run_template` 输出：`@{result://<run-id>/<output>/0}`
+- `run_templates` 前一步输出：`@{step://<step-id>/<output>/0}`
+
+模板参数通常不需要先调用 `upload_image`，直接传图片 ref 即可。
+
 
 ## `list_models(folder="", keywords="")`
 
