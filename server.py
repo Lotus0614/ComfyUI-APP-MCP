@@ -63,6 +63,21 @@ def _json(obj) -> str:
     return json.dumps(obj, ensure_ascii=False)
 
 
+def _require_template(name: str) -> dict:
+    """Resolve a template or raise so the MCP call itself fails (isError=true).
+
+    A missing or disabled template name is a caller mistake, not an execution
+    result: returning it as JSON lets agents treat the call as successful with
+    empty outputs.
+    """
+    template = template_manager.get_template(name)
+    if not template:
+        raise ValueError(f"Template '{name}' not found")
+    if template_manager.is_template_disabled(template):
+        raise ValueError(f"Template '{name}' is disabled")
+    return template
+
+
 def _format_template_result(result: dict) -> str:
     """Format template execution result for MCP response."""
     return json.dumps(
@@ -125,14 +140,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             name: Template name.
         """
         logger.info(f"[MCP] get_template(name={name!r})")
+        template = _require_template(name)
         try:
-            template = template_manager.get_template(name)
-            if not template:
-                logger.warning(f"[MCP] get_template → not found: {name}")
-                return _json({"error": f"Template '{name}' not found"})
-            if template_manager.is_template_disabled(template):
-                logger.warning(f"[MCP] get_template → disabled: {name}")
-                return _json({"error": f"Template '{name}' is disabled"})
             schema = template_manager.build_public_template_schema(template)
             schema.update(template_manager.build_template_token_fields(template))
             return _json(schema)
@@ -149,6 +158,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             title: Documentation section title to read.
         """
         logger.info(f"[MCP] read_template_doc(name={name!r}, title={title!r})")
+        _require_template(name)
         try:
             result = template_manager.read_template_doc(name, title)
             if result.get("error"):
@@ -171,6 +181,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         logger.info(f"[MCP] update_template_doc(name={name!r}, title={title!r}, mode={mode!r})")
         if not config.get_update_doc_enabled():
             return _json({"error": "update_template_doc is disabled. Enable it in MCP Server settings."})
+        _require_template(name)
         try:
             result = await template_manager.update_template_doc(name, title, content, mode)
             if result.get("error"):
@@ -268,6 +279,7 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         except json.JSONDecodeError as e:
             logger.error(f"[MCP] run_template → invalid JSON: {e}")
             return _json({"error": f"Invalid params JSON: {e}"})
+        _require_template(name)
         try:
             result = await template_manager.execute_template(
                 name,
@@ -315,6 +327,10 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
             logger.error(f"[MCP] run_templates → invalid JSON: {e}")
             return _json({"error": f"Invalid pipeline JSON: {e}"})
 
+        for step in (pipeline_data.get("steps", []) if isinstance(pipeline_data, dict) else []):
+            if isinstance(step, dict):
+                _require_template(str(step.get("template", "")).strip())
+
         try:
             result = await template_manager.run_templates(pipeline_data, timeout_per_step=effective_timeout)
             logger.info(f"[MCP] run_templates → {result.get('status', 'unknown')}")
@@ -338,12 +354,8 @@ def create_mcp_server(client: ComfyUIClient | None = None) -> FastMCP:
         """
         effective_timeout = timeout if timeout is not None else config.get_run_template_timeout()
         logger.info(f"[MCP] get_template_result(name={name!r}, run_id={run_id!r}, wait={wait}, timeout={effective_timeout})")
+        template = _require_template(name)
         try:
-            template = template_manager.get_template(name)
-            if not template:
-                return _json({"error": f"Template '{name}' not found"})
-            if template_manager.is_template_disabled(template):
-                return _json({"error": f"Template '{name}' is disabled"})
             outputs = template.get("outputs", {})
             result = await template_manager.get_template_outputs(
                 run_id,
