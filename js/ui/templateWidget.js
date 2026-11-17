@@ -39,7 +39,7 @@ async function syncApiPrompts(templateNames, setActionInfo) {
     return generatedCount;
 }
 
-function createTemplateRow(template, reloadTemplates) {
+function createTemplateRow(template, reloadTemplates, anchor) {
     const row = document.createElement('div');
     row.style.cssText = `${S.row}${template.disabled ? S.rowDisabled : ''}`;
 
@@ -82,7 +82,7 @@ function createTemplateRow(template, reloadTemplates) {
 
     const detailsButton = buildButton(t('details'), S.smallBtn);
     detailsButton.addEventListener('click', () => {
-        showTemplateDetail(template.name).catch((e) =>
+        showTemplateDetail(template.name, anchor).catch((e) =>
             alert(t('error', { message: e.message })),
         );
     });
@@ -242,7 +242,7 @@ export function createTemplateWidget() {
             list.innerHTML = buildTemplateListMessage(t('noMatchingWorkflows'));
         } else {
             for (const template of visibleTemplates) {
-                list.appendChild(createTemplateRow(template, loadTemplates));
+                list.appendChild(createTemplateRow(template, loadTemplates, container));
             }
         }
 
@@ -272,7 +272,9 @@ export function createTemplateWidget() {
 
     refreshButton.addEventListener('click', () => void loadTemplates());
     createButton.addEventListener('click', () =>
-        showCreateTemplateDialog(loadTemplates),
+        showCreateTemplateDialog(loadTemplates, container).catch((e) =>
+            alert(t('error', { message: e.message })),
+        ),
     );
     searchInput.addEventListener('input', renderTemplates);
 

@@ -72,7 +72,7 @@ export const S = {
     label:
         'display:block;font-size:12px;color:#aaa;margin-bottom:6px;',
     dropdown:
-        'display:none;position:fixed;max-height:260px;overflow-y:auto;background:#202020;border:1px solid #444;border-radius:8px;z-index:10001;box-shadow:0 12px 28px rgba(0,0,0,.4);',
+        'display:none;position:fixed;margin:0;inset:auto;max-height:260px;overflow-y:auto;background:#202020;border:1px solid #444;border-radius:8px;z-index:10001;box-shadow:0 12px 28px rgba(0,0,0,.4);',
     dropdownItem:
         'padding:8px 10px;cursor:pointer;font-size:12px;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;',
     preview:

@@ -15,7 +15,7 @@ function renderDetailRows(entries, formatter, emptyText) {
     return `<div style="${S.detailGrid}">${entries.map(formatter).join('')}</div>`;
 }
 
-export async function showTemplateDetail(name) {
+export async function showTemplateDetail(name, anchor = null) {
     const template = await apiFetch(
         `/templates/${encodeURIComponent(name)}?include_disabled=1`,
     );
@@ -24,7 +24,7 @@ export async function showTemplateDetail(name) {
         return;
     }
 
-    const shell = createModalShell({ width: 'min(720px,100%)' });
+    const shell = createModalShell({ width: 'min(720px,100%)', anchor });
     const { modal, open, close } = shell;
 
     const inputs = Object.entries(template.inputs || {});

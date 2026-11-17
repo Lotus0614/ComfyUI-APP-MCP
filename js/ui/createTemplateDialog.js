@@ -34,16 +34,41 @@ function renderWorkflowPreview(info) {
     return html;
 }
 
+/**
+ * Place the workflow list under the search field.
+ *
+ * The list is a native popover, so it renders in the top layer: the settings
+ * dialog's transformed/overflow-clipped ancestors no longer shift or cut it,
+ * and `getBoundingClientRect()` matches the fixed coordinates it uses.
+ */
 function positionDropdown(input, dropdown) {
     const rect = input.getBoundingClientRect();
     dropdown.style.top = `${rect.bottom + 2}px`;
     dropdown.style.left = `${rect.left}px`;
     dropdown.style.width = `${rect.width}px`;
-    dropdown.style.display = 'block';
 }
 
-export async function showCreateTemplateDialog(onDone) {
-    const shell = createModalShell({ width: 'min(680px,100%)' });
+function showDropdown(input, dropdown) {
+    positionDropdown(input, dropdown);
+    dropdown.style.display = 'block';
+    try {
+        dropdown.showPopover?.();
+    } catch {
+        /* browser without popover support: fall back to a plain overlay */
+    }
+}
+
+function hideDropdown(dropdown) {
+    try {
+        dropdown.hidePopover?.();
+    } catch {
+        /* not open */
+    }
+    dropdown.style.display = 'none';
+}
+
+export async function showCreateTemplateDialog(onDone, anchor = null) {
+    const shell = createModalShell({ width: 'min(680px,100%)', anchor });
     const { overlay, modal, open, close } = shell;
 
     modal.innerHTML = `
@@ -77,12 +102,15 @@ export async function showCreateTemplateDialog(onDone) {
     const cancelBtn = modal.querySelector('#mcp-cancel');
     const refreshBtn = modal.querySelector('#mcp-wf-refresh');
 
+    // Render the list in the top layer so the modal's scroll box cannot clip it.
+    dropdown.popover = 'manual';
+
     let selectedWorkflow = '';
     let allWorkflows = [];
     let removeDocumentClickListener = null;
 
     function closeDropdown() {
-        dropdown.style.display = 'none';
+        hideDropdown(dropdown);
     }
 
     function closeDialog() {
@@ -90,6 +118,8 @@ export async function showCreateTemplateDialog(onDone) {
             document.removeEventListener('click', removeDocumentClickListener);
             removeDocumentClickListener = null;
         }
+        window.removeEventListener('resize', keepDropdownAligned);
+        hideDropdown(dropdown);
         close();
     }
 
@@ -104,7 +134,7 @@ export async function showCreateTemplateDialog(onDone) {
 
         if (!matched.length) {
             dropdown.innerHTML = `<div style="${S.dropdownItem};color:#888;">${t('noMatchingWorkflows')}</div>`;
-            dropdown.style.display = 'block';
+            showDropdown(searchInput, dropdown);
             return;
         }
 
@@ -132,7 +162,7 @@ export async function showCreateTemplateDialog(onDone) {
             dropdown.appendChild(item);
         }
 
-        positionDropdown(searchInput, dropdown);
+        showDropdown(searchInput, dropdown);
     }
 
     async function loadWorkflows() {
@@ -185,6 +215,13 @@ export async function showCreateTemplateDialog(onDone) {
     searchInput.addEventListener('focus', () => {
         renderDropdown(searchInput.value);
     });
+    const keepDropdownAligned = () => {
+        if (dropdown.style.display === 'none') return;
+        positionDropdown(searchInput, dropdown);
+    };
+    modal.addEventListener('scroll', keepDropdownAligned, { passive: true });
+    window.addEventListener('resize', keepDropdownAligned);
+
     removeDocumentClickListener = (event) => {
         if (
             !searchInput.contains(event.target) &&
